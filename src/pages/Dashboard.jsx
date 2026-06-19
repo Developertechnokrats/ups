@@ -111,13 +111,20 @@ export default function Dashboard() {
     setClearing(false)
   }
 
-  const saveMsg = saveProgress
-    ? saveProgress.stage === 'done'
-      ? 'Saved! Refreshing…'
-      : saveProgress.stage === 'applicants'
-        ? `Saving applicants… ${saveProgress.done.toLocaleString()} / ${saveProgress.total.toLocaleString()}`
-        : `Saving applications… ${saveProgress.done.toLocaleString()} / ${saveProgress.total.toLocaleString()}`
-    : ''
+  function buildSaveMsg(p) {
+    if (!p) return ''
+    if (p.stage === 'done') return 'Saved! Refreshing…'
+    if (p.stage === 'clearing') return 'Clearing old data…'
+    const pct = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0
+    const label = p.stage === 'applicants' ? 'Saving applicants' : 'Saving applications'
+    // Rough ETA: applicants ~100/batch @ 150ms, applications ~50/batch @ 100ms
+    const remaining = p.total - p.done
+    const msPerRow = p.stage === 'applicants' ? 0.15 : 0.1
+    const etaSec = Math.round((remaining * msPerRow))
+    const etaStr = etaSec > 5 ? ` · ~${etaSec < 60 ? etaSec + 's' : Math.ceil(etaSec/60) + 'm'} left` : ''
+    return `${label}… ${p.done.toLocaleString()} / ${p.total.toLocaleString()} (${pct}%)${etaStr}`
+  }
+  const saveMsg = buildSaveMsg(saveProgress)
 
   const displayed = useMemo(() => {
     let list = [...applicants]
@@ -247,10 +254,13 @@ export default function Dashboard() {
         {saveProgress && (
           <div className={styles.bannerInfo}>
             <RefreshCw size={13} className={styles.spin} />
-            <span>{saveMsg}</span>
+            <span style={{ flex: 1 }}>{saveMsg}</span>
             {saveProgress.total > 0 && (
               <div className={styles.savePBar}>
-                <div className={styles.savePFill} style={{ width: `${Math.round((saveProgress.done / saveProgress.total) * 100)}%` }} />
+                <div
+                  className={styles.savePFill}
+                  style={{ width: `${Math.min(100, Math.round((saveProgress.done / saveProgress.total) * 100))}%` }}
+                />
               </div>
             )}
           </div>

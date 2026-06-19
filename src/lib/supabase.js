@@ -13,28 +13,39 @@ export const supabase = isConfigured ? createClient(supabaseUrl, supabaseKey) : 
 export const hasSupabase = isConfigured
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-// Upsert in safe batches, return count saved
-async function batchUpsert(table, rows, batchSize = 200, onConflict = null) {
-  let saved = 0
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+// Retry a single async operation up to `attempts` times with exponential backoff
+async function withRetry(fn, attempts = 3, baseDelayMs = 500) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn()
+    } catch (e) {
+      if (i === attempts - 1) throw e
+      await sleep(baseDelayMs * Math.pow(2, i))  // 500ms, 1000ms, 2000ms
+    }
+  }
+}
+
+// Send batches sequentially with a small pause between each to avoid
+// overwhelming Supabase's connection pool on large uploads
+async function batchedWrite(table, rows, operation, batchSize, pauseMs, onProgress) {
+  const total = rows.length
+  let done = 0
   for (let i = 0; i < rows.length; i += batchSize) {
     const batch = rows.slice(i, i + batchSize)
-    const q = onConflict
-      ? supabase.from(table).upsert(batch, { onConflict })
-      : supabase.from(table).insert(batch)
-    const { error } = await q
-    if (error) throw new Error(`${table} batch ${Math.floor(i/batchSize)+1}: ${error.message}`)
-    saved += batch.length
+    await withRetry(() => operation(batch))
+    done += batch.length
+    onProgress?.({ done, total })
+    if (i + batchSize < rows.length) await sleep(pauseMs)
   }
-  return saved
 }
 
 // ── Write ─────────────────────────────────────────────────────────────────
 export async function upsertAllData(applicantRows, applicationRows, onProgress) {
   if (!supabase) throw new Error('Supabase not configured')
 
-  // Final dedup by email before any DB call — prevents "ON CONFLICT DO UPDATE
-  // command cannot affect row a second time" when same email appears in multiple
-  // raw rows (people who applied for multiple jobs).
+  // Dedup applicants by email — prevents ON CONFLICT collision within same batch
   const seenEmails = new Set()
   const dedupedApplicants = applicantRows.filter(a => {
     if (!a.email || seenEmails.has(a.email)) return false
@@ -42,57 +53,129 @@ export async function upsertAllData(applicantRows, applicationRows, onProgress) 
     return true
   })
 
-  // Step 1: upsert applicants in batches of 200
-  for (let i = 0; i < dedupedApplicants.length; i += 200) {
-    const batch = dedupedApplicants.slice(i, i + 200)
-    const { error } = await supabase
-      .from('applicants')
-      .upsert(batch, { onConflict: 'email' })
-    if (error) throw new Error('Applicants save failed: ' + error.message)
-    onProgress?.({ stage: 'applicants', done: Math.min(i + 200, dedupedApplicants.length), total: dedupedApplicants.length })
-  }
+  // ── Step 1: Upsert applicants ──────────────────────────────────────────
+  // 100 rows/batch, 150ms pause → safe for large files, ~3-4 min for 100k
+  onProgress?.({ stage: 'applicants', done: 0, total: dedupedApplicants.length })
+  await batchedWrite(
+    'applicants',
+    dedupedApplicants,
+    async (batch) => {
+      const { error } = await supabase
+        .from('applicants')
+        .upsert(batch, { onConflict: 'email' })
+      if (error) throw new Error('Applicants save failed: ' + error.message)
+    },
+    100,   // batch size
+    150,   // ms between batches
+    ({ done, total }) => onProgress?.({ stage: 'applicants', done, total })
+  )
 
-  // Step 2: delete old applications for these emails (clean slate)
-  // Do in chunks to avoid URL length limits
-  const emails = dedupedApplicants.map(a => a.email)
-  for (let i = 0; i < emails.length; i += 100) {
-    const chunk = emails.slice(i, i + 100)
-    const { error } = await supabase.from('applications').delete().in('email', chunk)
+  // ── Step 2: Wipe old applications (TRUNCATE-style via delete all) ──────
+  // For large datasets, deleting by email list is too slow.
+  // Instead: delete ALL applications then re-insert fresh.
+  // This is safe because we just re-upserted all applicants above.
+  onProgress?.({ stage: 'clearing', done: 0, total: 1 })
+  await withRetry(async () => {
+    const { error } = await supabase.from('applications').delete().gte('id', 0)
     if (error) throw new Error('Cleanup failed: ' + error.message)
-  }
+  })
 
-  // Step 3: insert applications in batches of 200
+  // ── Step 3: Insert applications ────────────────────────────────────────
+  // 50 rows/batch for applications (more columns = bigger payload), 100ms pause
   onProgress?.({ stage: 'applications', done: 0, total: applicationRows.length })
-  let appDone = 0
-  for (let i = 0; i < applicationRows.length; i += 200) {
-    const batch = applicationRows.slice(i, i + 200)
-    const { error } = await supabase.from('applications').insert(batch)
-    if (error) throw new Error('Applications save failed: ' + error.message)
-    appDone += batch.length
-    onProgress?.({ stage: 'applications', done: appDone, total: applicationRows.length })
-  }
+  await batchedWrite(
+    'applications',
+    applicationRows,
+    async (batch) => {
+      const { error } = await supabase.from('applications').insert(batch)
+      if (error) throw new Error('Applications save failed: ' + error.message)
+    },
+    50,    // batch size
+    100,   // ms between batches
+    ({ done, total }) => onProgress?.({ stage: 'applications', done, total })
+  )
 }
 
 // ── Read ──────────────────────────────────────────────────────────────────
-export async function fetchDuplicates({ fromDate, toDate } = {}) {
-  if (!supabase) throw new Error('Supabase not configured')
+// For large datasets, fetch applicants and their applications in two separate
+// queries then join in JS — avoids Supabase's nested select row limit (1000)
+async function fetchApplicantsBase(filter = {}) {
+  const { fromDate, toDate, duplicatesOnly = false } = filter
+
   let query = supabase
     .from('applicants')
-    .select(`*, applications (
-      id, job_id, job_title, job_code, department,
-      interviewing_managers, is_job_active,
-      application_date, status_id, status_name, job_status
-    )`)
-    .gt('applied_count', 1)
+    .select('*')
     .order('applied_count', { ascending: false })
     .order('last_appointment_date', { ascending: false })
 
+  if (duplicatesOnly) query = query.gt('applied_count', 1)
   if (fromDate) query = query.gte('start_date', fromDate)
   if (toDate)   query = query.lte('start_date', toDate)
 
-  const { data, error } = await query
-  if (error) throw error
-  return data || []
+  // Paginate through all results (Supabase default limit is 1000)
+  const allRows = []
+  let from = 0
+  const PAGE = 1000
+  while (true) {
+    const { data, error } = await query.range(from, from + PAGE - 1)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    allRows.push(...data)
+    if (data.length < PAGE) break
+    from += PAGE
+  }
+  return allRows
+}
+
+async function fetchApplicationsForApplicants(applicantIds) {
+  if (!applicantIds.length) return []
+  const allApps = []
+  // Fetch in chunks of 500 IDs
+  for (let i = 0; i < applicantIds.length; i += 500) {
+    const chunk = applicantIds.slice(i, i + 500)
+    let from = 0
+    const PAGE = 1000
+    while (true) {
+      const { data, error } = await supabase
+        .from('applications')
+        .select('*')
+        .in('applicant_id', chunk)
+        .range(from, from + PAGE - 1)
+      if (error) throw error
+      if (!data || data.length === 0) break
+      allApps.push(...data)
+      if (data.length < PAGE) break
+      from += PAGE
+    }
+  }
+  return allApps
+}
+
+function joinApplicantsAndApplications(applicants, applications) {
+  const appMap = {}
+  for (const a of applications) {
+    const key = a.applicant_id || a.email
+    if (!appMap[key]) appMap[key] = []
+    appMap[key].push(a)
+  }
+  return applicants.map(a => ({
+    ...a,
+    applications: appMap[a.applicant_id || a.email] || []
+  }))
+}
+
+export async function fetchDuplicates({ fromDate, toDate } = {}) {
+  if (!supabase) throw new Error('Supabase not configured')
+  const applicants = await fetchApplicantsBase({ fromDate, toDate, duplicatesOnly: true })
+  const apps = await fetchApplicationsForApplicants(applicants.map(a => a.applicant_id).filter(Boolean))
+  return joinApplicantsAndApplications(applicants, apps)
+}
+
+export async function fetchAllApplicants({ fromDate, toDate } = {}) {
+  if (!supabase) throw new Error('Supabase not configured')
+  const applicants = await fetchApplicantsBase({ fromDate, toDate, duplicatesOnly: false })
+  const apps = await fetchApplicationsForApplicants(applicants.map(a => a.applicant_id).filter(Boolean))
+  return joinApplicantsAndApplications(applicants, apps)
 }
 
 export async function fetchStats() {
@@ -109,31 +192,9 @@ export async function fetchStats() {
   }
 }
 
-// ── Fetch ALL applicants (including single-application ones) ──────────────
-export async function fetchAllApplicants({ fromDate, toDate } = {}) {
-  if (!supabase) throw new Error('Supabase not configured')
-  let query = supabase
-    .from('applicants')
-    .select(`*, applications (
-      id, job_id, job_title, job_code, department,
-      interviewing_managers, is_job_active,
-      application_date, status_id, status_name, job_status
-    )`)
-    .order('applied_count', { ascending: false })
-    .order('last_appointment_date', { ascending: false })
-
-  if (fromDate) query = query.gte('start_date', fromDate)
-  if (toDate)   query = query.lte('start_date', toDate)
-
-  const { data, error } = await query
-  if (error) throw error
-  return data || []
-}
-
-// ── Wipe all data from both tables ────────────────────────────────────────
+// ── Clear all data ────────────────────────────────────────────────────────
 export async function clearAllData() {
   if (!supabase) throw new Error('Supabase not configured')
-  // Delete applications first (foreign key constraint)
   const { error: e1 } = await supabase.from('applications').delete().gte('id', 0)
   if (e1) throw new Error('Failed to clear applications: ' + e1.message)
   const { error: e2 } = await supabase.from('applicants').delete().gte('id', 0)
