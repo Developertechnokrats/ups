@@ -76,11 +76,13 @@ export default function ApplicantCard({ applicant, index }) {
 }
 
 function formatDisplayDate(dateStr) {
-  if (!dateStr) return ''
+  if (!dateStr || dateStr === 'null' || dateStr === 'undefined') return ''
   try {
-    const d = new Date(dateStr + 'T00:00:00')
+    const s = dateStr.length === 10 ? dateStr + 'T00:00:00' : dateStr
+    const d = new Date(s)
+    if (isNaN(d.getTime())) return ''
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-  } catch { return dateStr }
+  } catch { return '' }
 }
 
 function parseJobsFromNotes(notes = '') {

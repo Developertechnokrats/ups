@@ -1,0 +1,78 @@
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200; padding: 16px;
+}
+.modal {
+  background: var(--surface);
+  border-radius: var(--radius-xl);
+  padding: 24px;
+  width: 100%; max-width: 620px;
+  max-height: 80vh; overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.14);
+}
+.header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 16px;
+}
+.title { font-size: 15px; font-weight: 600; flex: 1; }
+.close {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 16px; padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+.close:hover { background: var(--surface2); }
+
+.verifyBtn {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--text); color: var(--surface);
+  border: none; border-radius: var(--radius-md);
+  padding: 9px 18px; font-size: 13px; font-weight: 500;
+  cursor: pointer; margin-bottom: 20px;
+}
+.verifyBtn:hover { opacity: 0.85; }
+.verifyBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.results { display: flex; flex-direction: column; gap: 16px; }
+
+.counts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.countCard {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px; border-radius: var(--radius-md);
+  border: 0.5px solid var(--border);
+}
+.ok { background: var(--green-bg); color: var(--green-text); border-color: var(--green-text); }
+.warn { background: var(--amber-bg); color: var(--amber-text); border-color: var(--amber-text); }
+.countVal { font-size: 20px; font-weight: 600; }
+.countLabel { font-size: 11px; margin-top: 2px; }
+
+.errBox {
+  background: var(--red-bg); color: var(--red-text);
+  border-radius: var(--radius-md); padding: 10px 14px;
+  font-size: 12px; line-height: 1.6;
+}
+
+.sectionLabel {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-muted);
+}
+
+.table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.table th {
+  text-align: left; padding: 6px 8px;
+  border-bottom: 0.5px solid var(--border-strong);
+  color: var(--text-muted); font-weight: 500;
+}
+.table td {
+  padding: 6px 8px;
+  border-bottom: 0.5px solid var(--border);
+  color: var(--text);
+}
+.table tr:last-child td { border-bottom: none; }
+.email { color: var(--text-muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.7s linear infinite; }

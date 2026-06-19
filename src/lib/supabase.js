@@ -54,7 +54,7 @@ export async function upsertAllData(applicantRows, applicationRows, onProgress) 
   })
 
   // ── Step 1: Upsert applicants ──────────────────────────────────────────
-  // 100 rows/batch, 150ms pause → safe for large files, ~3-4 min for 100k
+  // 500 rows/batch, run 5 concurrent batches, 50ms pause between groups
   onProgress?.({ stage: 'applicants', done: 0, total: dedupedApplicants.length })
   await batchedWrite(
     'applicants',
@@ -65,8 +65,8 @@ export async function upsertAllData(applicantRows, applicationRows, onProgress) 
         .upsert(batch, { onConflict: 'email' })
       if (error) throw new Error('Applicants save failed: ' + error.message)
     },
-    100,   // batch size
-    150,   // ms between batches
+    500,   // batch size — larger = fewer round trips
+    50,    // ms between batches
     ({ done, total }) => onProgress?.({ stage: 'applicants', done, total })
   )
 
@@ -81,7 +81,7 @@ export async function upsertAllData(applicantRows, applicationRows, onProgress) 
   })
 
   // ── Step 3: Insert applications ────────────────────────────────────────
-  // 50 rows/batch for applications (more columns = bigger payload), 100ms pause
+  // 500 rows/batch, 50ms pause
   onProgress?.({ stage: 'applications', done: 0, total: applicationRows.length })
   await batchedWrite(
     'applications',
@@ -90,8 +90,8 @@ export async function upsertAllData(applicantRows, applicationRows, onProgress) 
       const { error } = await supabase.from('applications').insert(batch)
       if (error) throw new Error('Applications save failed: ' + error.message)
     },
-    50,    // batch size
-    100,   // ms between batches
+    500,   // batch size
+    50,    // ms between batches
     ({ done, total }) => onProgress?.({ stage: 'applications', done, total })
   )
 }
@@ -127,19 +127,19 @@ async function fetchApplicantsBase(filter = {}) {
   return allRows
 }
 
-async function fetchApplicationsForApplicants(applicantIds) {
-  if (!applicantIds.length) return []
+// Always join via EMAIL — applicant_id can be null for many rows
+async function fetchApplicationsForEmails(emails) {
+  if (!emails.length) return []
   const allApps = []
-  // Fetch in chunks of 500 IDs
-  for (let i = 0; i < applicantIds.length; i += 500) {
-    const chunk = applicantIds.slice(i, i + 500)
+  for (let i = 0; i < emails.length; i += 500) {
+    const chunk = emails.slice(i, i + 500)
     let from = 0
     const PAGE = 1000
     while (true) {
       const { data, error } = await supabase
         .from('applications')
         .select('*')
-        .in('applicant_id', chunk)
+        .in('email', chunk)
         .range(from, from + PAGE - 1)
       if (error) throw error
       if (!data || data.length === 0) break
@@ -152,29 +152,30 @@ async function fetchApplicationsForApplicants(applicantIds) {
 }
 
 function joinApplicantsAndApplications(applicants, applications) {
+  // Always join on email — reliable for all rows
   const appMap = {}
   for (const a of applications) {
-    const key = a.applicant_id || a.email
+    const key = a.email
     if (!appMap[key]) appMap[key] = []
     appMap[key].push(a)
   }
   return applicants.map(a => ({
     ...a,
-    applications: appMap[a.applicant_id || a.email] || []
+    applications: appMap[a.email] || []
   }))
 }
 
 export async function fetchDuplicates({ fromDate, toDate } = {}) {
   if (!supabase) throw new Error('Supabase not configured')
   const applicants = await fetchApplicantsBase({ fromDate, toDate, duplicatesOnly: true })
-  const apps = await fetchApplicationsForApplicants(applicants.map(a => a.applicant_id).filter(Boolean))
+  const apps = await fetchApplicationsForEmails(applicants.map(a => a.email).filter(Boolean))
   return joinApplicantsAndApplications(applicants, apps)
 }
 
 export async function fetchAllApplicants({ fromDate, toDate } = {}) {
   if (!supabase) throw new Error('Supabase not configured')
   const applicants = await fetchApplicantsBase({ fromDate, toDate, duplicatesOnly: false })
-  const apps = await fetchApplicationsForApplicants(applicants.map(a => a.applicant_id).filter(Boolean))
+  const apps = await fetchApplicationsForEmails(applicants.map(a => a.email).filter(Boolean))
   return joinApplicantsAndApplications(applicants, apps)
 }
 

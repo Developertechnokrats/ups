@@ -27,6 +27,16 @@ function parseDate(str) {
 const fmtISO     = d => d ? format(d, 'yyyy-MM-dd') : null
 const fmtDisplay = d => d ? format(d, 'dd MMM yyyy') : ''
 
+// Safe: accepts a date string from DB (may be null/empty/'null'), returns display string
+function safeDisplayDate(str) {
+  if (!str || str === 'null' || str === 'undefined') return ''
+  try {
+    const d = new Date(str.length === 10 ? str + 'T00:00:00' : str)
+    if (isNaN(d.getTime())) return ''
+    return fmtDisplay(d)
+  } catch { return '' }
+}
+
 // ── Core row processor ───────────────────────────────────────────────────
 export function processRawRows(rows) {
   // Always group by EMAIL — it is the unique key in Supabase.
@@ -199,12 +209,11 @@ export function exportToCSV(applicants, filename = 'applicants') {
   const rows = applicants.map(a => {
     const jobs = a.jobs || (a.applications || []).map(j => ({
       title: j.job_title || '',
-      date:  j.application_date ? fmtDisplay(new Date(j.application_date + 'T00:00:00')) : ''
+      date:  safeDisplayDate(j.application_date)
     }))
     const tags    = a.tags || buildTags(jobs)
     const notes   = jobs.map(j => `${j.title} -- ${j.date}`).join(' | ')
-    const lastDate= a.last_appointment_date
-      ? fmtDisplay(new Date(a.last_appointment_date + 'T00:00:00')) : ''
+    const lastDate= safeDisplayDate(a.last_appointment_date)
     return [
       csvCell(a.firstname),
       csvCell(a.lastname),

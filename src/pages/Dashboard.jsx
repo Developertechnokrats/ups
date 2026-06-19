@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Upload, Download, RefreshCw, Search, SlidersHorizontal, Database, Users, Copy, Trash2 } from 'lucide-react'
+import { Upload, Download, RefreshCw, Search, SlidersHorizontal, Database, Users, Copy, Trash2, ShieldCheck } from 'lucide-react'
 import { fetchDuplicates, fetchAllApplicants, fetchStats, upsertAllData, clearAllData, hasSupabase } from '../lib/supabase'
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
 import ApplicantCard from '../components/ApplicantCard'
 import UploadZone from '../components/UploadZone'
+import DbVerify from '../components/DbVerify'
 import styles from './Dashboard.module.css'
 
 const JOB_FILTERS  = ['All', '1 job', '2 jobs', '3 jobs', '4+ jobs']
@@ -36,7 +37,13 @@ export default function Dashboard() {
         fetchFn({ fromDate: fromDate || undefined, toDate: toDate || undefined }),
         fetchStats(),
       ])
-      setApplicants(enrichForDisplay(data))
+      // enrich each row individually — a bad date on one row won't crash the whole list
+      const enriched = []
+      for (const row of (data || [])) {
+        try { enriched.push(...enrichForDisplay([row])) }
+        catch (_) { enriched.push({ ...row, jobs: [], tags: '' }) }
+      }
+      setApplicants(enriched)
       setDbStats(stats)
       setDbMode(true)
     } catch (e) {
@@ -117,11 +124,14 @@ export default function Dashboard() {
     if (p.stage === 'clearing') return 'Clearing old data…'
     const pct = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0
     const label = p.stage === 'applicants' ? 'Saving applicants' : 'Saving applications'
-    // Rough ETA: applicants ~100/batch @ 150ms, applications ~50/batch @ 100ms
-    const remaining = p.total - p.done
-    const msPerRow = p.stage === 'applicants' ? 0.15 : 0.1
-    const etaSec = Math.round((remaining * msPerRow))
-    const etaStr = etaSec > 5 ? ` · ~${etaSec < 60 ? etaSec + 's' : Math.ceil(etaSec/60) + 'm'} left` : ''
+    // ETA: 500 rows/batch @ ~300ms avg per batch (network + 50ms pause)
+    const BATCH = 500
+    const MS_PER_BATCH = 300
+    const batchesLeft = Math.ceil((p.total - p.done) / BATCH)
+    const etaSec = Math.round((batchesLeft * MS_PER_BATCH) / 1000)
+    const etaStr = etaSec > 3
+      ? ` · ~${etaSec < 60 ? etaSec + 's' : Math.ceil(etaSec / 60) + 'm'} left`
+      : ''
     return `${label}… ${p.done.toLocaleString()} / ${p.total.toLocaleString()} (${pct}%)${etaStr}`
   }
   const saveMsg = buildSaveMsg(saveProgress)
@@ -197,6 +207,11 @@ export default function Dashboard() {
         )}
 
         <div className={styles.sidebarFooter}>
+          {hasSupabase && (
+            <button className={styles.verifyBtn} onClick={() => setShowVerify(true)}>
+              <ShieldCheck size={13} /> Verify DB
+            </button>
+          )}
           {dbMode
             ? <div className={styles.dbBadge}><Database size={12} /> Supabase live</div>
             : <div className={styles.dbBadgeLocal}><Database size={12} /> Local mode</div>
@@ -353,6 +368,7 @@ export default function Dashboard() {
       </main>
 
       {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)} />}
+      {showVerify && <DbVerify onClose={() => setShowVerify(false)} />}
     </div>
   )
 }
