@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight } from 'lucide-react'
-import { fetchPage, fetchStats, upsertAllData, clearAllData, hasSupabase, PAGE_SIZE } from '../lib/supabase'
+import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
 import ApplicantCard from '../components/ApplicantCard'
@@ -30,8 +30,34 @@ export default function Dashboard() {
   const [toDate, setToDate]             = useState('')
   const [viewMode, setViewMode]         = useState('all')
   const [dbMode, setDbMode]             = useState(false)
+  const [exporting, setExporting]       = useState(false)
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
+
+  async function handleExport() {
+    setExporting(true)
+    setError('')
+    try {
+      let rows
+      if (hasSupabase) {
+        const raw = await fetchAllForExport({
+          fromDate: fromDate || undefined,
+          toDate: toDate || undefined,
+          duplicatesOnly: viewMode === 'duplicates',
+          search: activeSearch,
+        })
+        rows = enrichForDisplay(raw)
+      } else {
+        rows = displayed
+      }
+      // Apply tag filter client-side
+      const toExport = tagFilter === 'Any type' ? rows : rows.filter(a => (a.tags||'').includes(tagFilter))
+      exportToCSV(toExport, viewMode === 'duplicates' ? 'duplicate_applicants' : 'all_applicants')
+    } catch(e) {
+      setError('Export failed: ' + e.message)
+    }
+    setExporting(false)
+  }
 
   // ── Fetch one page ────────────────────────────────────────────────────
   async function loadPage(page, opts = {}) {
@@ -222,8 +248,11 @@ export default function Dashboard() {
                 <button className={styles.btnSecondary} onClick={() => setConfirmClear(false)}>Cancel</button>
               </div>
             )}
-            <button className={styles.btnPrimary} onClick={() => exportToCSV(displayed, viewMode==='duplicates'?'duplicate_applicants':'all_applicants')} disabled={!displayed.length}>
-              <Download size={14}/> Export CSV ({displayed.length.toLocaleString()})
+            <button className={styles.btnPrimary} onClick={handleExport} disabled={!totalCount || exporting}>
+              {exporting
+                ? <><RefreshCw size={14} className={styles.spin}/> Exporting…</>
+                : <><Download size={14}/> Export CSV ({totalCount.toLocaleString()})</>
+              }
             </button>
           </div>
         </div>

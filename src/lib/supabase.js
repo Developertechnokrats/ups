@@ -57,15 +57,26 @@ export async function fetchPage({ fromDate, toDate, duplicatesOnly = false, page
   if (error) throw error
   if (!applicants?.length) return { applicants: [], applications: [], totalCount: count ?? 0 }
 
-  // Step 2: fetch applications only for this page's emails (fast, small set)
+  // Step 2: fetch ALL applications for this page's applicants
+  // Must paginate: 50 applicants × avg jobs can easily exceed Supabase's 1000-row default limit
   const emails = applicants.map(a => a.email).filter(Boolean)
-  const { data: applications, error: e2 } = await supabase
-    .from('applications')
-    .select('*')
-    .in('email', emails)
-  if (e2) throw e2
+  const allApplications = []
+  let appFrom = 0
+  const APP_PAGE = 1000
+  while (true) {
+    const { data: appBatch, error: e2 } = await supabase
+      .from('applications')
+      .select('*')
+      .in('email', emails)
+      .range(appFrom, appFrom + APP_PAGE - 1)
+    if (e2) throw e2
+    if (!appBatch || appBatch.length === 0) break
+    allApplications.push(...appBatch)
+    if (appBatch.length < APP_PAGE) break
+    appFrom += APP_PAGE
+  }
 
-  return { applicants, applications: applications || [], totalCount: count ?? 0 }
+  return { applicants, applications: allApplications, totalCount: count ?? 0 }
 }
 
 // ── Write — batched with progress ────────────────────────────────────────
@@ -115,4 +126,55 @@ export async function clearAllData() {
   if (e1) throw new Error('Failed to clear applications: ' + e1.message)
   const { error: e2 } = await supabase.from('applicants').delete().gte('id', 0)
   if (e2) throw new Error('Failed to clear applicants: ' + e2.message)
+}
+
+// ── Export fetch — gets ALL matching rows for CSV download ────────────────
+export async function fetchAllForExport({ fromDate, toDate, duplicatesOnly = false, search = '' } = {}) {
+  if (!supabase) throw new Error('Supabase not configured')
+  const allApplicants = []
+  let page = 0
+  const PAGE = 1000  // larger page for export
+
+  while (true) {
+    let q = supabase
+      .from('applicants')
+      .select('*')
+      .order('applied_count', { ascending: false })
+      .order('last_appointment_date', { ascending: false })
+      .range(page * PAGE, page * PAGE + PAGE - 1)
+
+    if (duplicatesOnly) q = q.gt('applied_count', 1)
+    if (fromDate) q = q.gte('start_date', fromDate)
+    if (toDate)   q = q.lte('start_date', toDate)
+    if (search?.trim()) {
+      const s = search.trim()
+      q = q.or(`firstname.ilike.%${s}%,lastname.ilike.%${s}%,email.ilike.%${s}%`)
+    }
+
+    const { data, error } = await q
+    if (error) throw error
+    if (!data || data.length === 0) break
+    allApplicants.push(...data)
+    if (data.length < PAGE) break
+    page++
+  }
+
+  if (!allApplicants.length) return []
+
+  // Fetch all applications for these applicants
+  const emails = allApplicants.map(a => a.email).filter(Boolean)
+  const allApps = []
+  for (let i = 0; i < emails.length; i += 500) {
+    const { data, error } = await supabase
+      .from('applications').select('*').in('email', emails.slice(i, i + 500))
+    if (error) throw error
+    if (data) allApps.push(...data)
+  }
+
+  const appMap = {}
+  for (const a of allApps) {
+    if (!appMap[a.email]) appMap[a.email] = []
+    appMap[a.email].push(a)
+  }
+  return allApplicants.map(a => ({ ...a, applications: appMap[a.email] || [] }))
 }
