@@ -345,7 +345,14 @@ export default function Dashboard() {
               </span>
             </div>
 
-            {displayed.map((a,i) => <ApplicantCard key={a.email||i} applicant={a} index={i}/>)}
+            {displayed.map((a,i) => (
+              <ApplicantCard
+                key={a.email||i}
+                applicant={a}
+                index={i}
+                onViewDetails={(applicant, idx) => { setSelectedApplicant(applicant); setSelectedIndex(idx) }}
+              />
+            ))}
 
             {/* Pagination controls */}
             {totalPages > 1 && (
@@ -390,6 +397,13 @@ export default function Dashboard() {
 
       {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)}/>}
       {showVerify && <DbVerify onClose={() => setShowVerify(false)}/>}
+      {selectedApplicant && (
+        <ApplicantModal
+          applicant={selectedApplicant}
+          index={selectedIndex}
+          onClose={() => setSelectedApplicant(null)}
+        />
+      )}
     </div>
   )
 }
