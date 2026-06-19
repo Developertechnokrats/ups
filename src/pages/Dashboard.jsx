@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Upload, Download, RefreshCw, Search, SlidersHorizontal, Database, Users } from 'lucide-react'
-import { fetchDuplicates, fetchStats, upsertAllData } from '../lib/supabase'
+import { Upload, Download, RefreshCw, Search, SlidersHorizontal, Database } from 'lucide-react'
+import { fetchDuplicates, fetchStats, upsertAllData, hasSupabase } from '../lib/supabase'
 import { parseCSV, parseExcel, enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
 import ApplicantCard from '../components/ApplicantCard'
@@ -10,82 +10,75 @@ import styles from './Dashboard.module.css'
 const FILTER_OPTIONS = ['All', '2 jobs', '3 jobs', '4+ jobs']
 
 export default function Dashboard() {
-  const [applicants, setApplicants]     = useState([])
-  const [dbStats, setDbStats]           = useState({})
-  const [loading, setLoading]           = useState(false)
-  const [uploading, setUploading]       = useState(false)
-  const [uploadMsg, setUploadMsg]       = useState('')
-  const [showUpload, setShowUpload]     = useState(false)
-  const [error, setError]               = useState('')
-  const [search, setSearch]             = useState('')
-  const [filter, setFilter]             = useState('All')
-  const [fromDate, setFromDate]         = useState('')
-  const [toDate, setToDate]             = useState('')
-  const [view, setView]                 = useState('duplicates') // 'duplicates' | 'all'
-  const [dbMode, setDbMode]             = useState(false)
-
-  const hasSupabase = !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY
-    && import.meta.env.VITE_SUPABASE_URL !== 'your_supabase_project_url')
+  const [applicants, setApplicants] = useState([])
+  const [dbStats, setDbStats]       = useState({})
+  const [loading, setLoading]       = useState(false)
+  const [uploadMsg, setUploadMsg]   = useState('')
+  const [showUpload, setShowUpload] = useState(false)
+  const [error, setError]           = useState('')
+  const [search, setSearch]         = useState('')
+  const [filter, setFilter]         = useState('All')
+  const [fromDate, setFromDate]     = useState('')
+  const [toDate, setToDate]         = useState('')
+  const [dbMode, setDbMode]         = useState(false)
 
   async function loadFromDB() {
-    if (!hasSupabase) return
     setLoading(true)
     setError('')
     try {
       const [data, stats] = await Promise.all([
         fetchDuplicates({ fromDate: fromDate || undefined, toDate: toDate || undefined }),
-        fetchStats()
+        fetchStats(),
       ])
       setApplicants(enrichForDisplay(data))
       setDbStats(stats)
       setDbMode(true)
     } catch (e) {
-      setError('Could not connect to Supabase: ' + e.message)
+      setError('Supabase error: ' + e.message)
     }
     setLoading(false)
   }
 
-  useEffect(() => { if (hasSupabase) loadFromDB() }, [fromDate, toDate])
+  useEffect(() => {
+    if (hasSupabase) loadFromDB()
+  }, [fromDate, toDate])
 
-  async function handleUploadData(parsed, filename) {
+  async function handleUploadData(parsed) {
     const { applicantRows, applicationRows } = parsed
     setShowUpload(false)
+    setError('')
 
     if (hasSupabase) {
-      setUploading(true)
-      setUploadMsg(`Saving ${applicantRows.length} applicants and ${applicationRows.length} applications…`)
-      setError('')
+      setUploadMsg(`Saving ${applicantRows.length} applicants + ${applicationRows.length} applications to Supabase…`)
       try {
         await upsertAllData(applicantRows, applicationRows)
-        setUploadMsg('Saved to Supabase. Refreshing…')
+        setUploadMsg('Saved! Refreshing…')
         await loadFromDB()
         setUploadMsg('')
       } catch (e) {
-        setError('Supabase save failed: ' + e.message + '. Showing locally.')
-        fallbackLocal(applicantRows)
+        setError('Supabase save failed: ' + e.message + '. Showing data locally.')
+        setUploadMsg('')
+        showLocal(applicantRows, applicationRows)
       }
-      setUploading(false)
     } else {
-      fallbackLocal(applicantRows, applicationRows)
+      showLocal(applicantRows, applicationRows)
     }
   }
 
-  function fallbackLocal(applicantRows, applicationRows) {
-    // Map applications back onto applicants for display
+  function showLocal(applicantRows, applicationRows) {
     const appMap = {}
-    for (const a of (applicationRows || [])) {
-      const key = a.email
-      if (!appMap[key]) appMap[key] = []
-      appMap[key].push(a)
+    for (const a of applicationRows) {
+      if (!appMap[a.email]) appMap[a.email] = []
+      appMap[a.email].push(a)
     }
     const enriched = applicantRows
       .filter(a => a.applied_count > 1)
       .map(a => ({ ...a, applications: appMap[a.email] || [] }))
     setApplicants(enrichForDisplay(enriched))
     setDbStats({
-      totalApplicants: applicantRows.length,
-      totalApplications: (applicationRows || []).length,
-      duplicates: enriched.length,
+      totalApplicants:   applicantRows.length,
+      totalApplications: applicationRows.length,
+      duplicates:        enriched.length,
     })
   }
 
@@ -99,54 +92,53 @@ export default function Dashboard() {
         (a.jobs || []).some(j => (j.title || '').toLowerCase().includes(q))
       )
     }
-    if (filter === '2 jobs') list = list.filter(a => a.applied_count === 2)
-    else if (filter === '3 jobs') list = list.filter(a => a.applied_count === 3)
+    if (filter === '2 jobs')  list = list.filter(a => a.applied_count === 2)
+    else if (filter === '3 jobs')  list = list.filter(a => a.applied_count === 3)
     else if (filter === '4+ jobs') list = list.filter(a => a.applied_count >= 4)
     return list
   }, [applicants, search, filter])
 
   return (
     <div className={styles.layout}>
-      {/* Sidebar */}
+      {/* ── Sidebar ── */}
       <aside className={styles.sidebar}>
         <div className={styles.brand}>
           <div className={styles.logo}>UPS</div>
           <span className={styles.brandName}>Applicant Hub</span>
         </div>
+
         <nav className={styles.nav}>
-          <a className={`${styles.navItem} ${styles.active}`}>
+          <span className={`${styles.navItem} ${styles.active}`}>
             <SlidersHorizontal size={16} /> Dashboard
-          </a>
+          </span>
         </nav>
-        <div className={styles.sidebarStats}>
-          {dbStats.totalApplicants != null && (
-            <>
-              <div className={styles.sidebarStat}>
-                <span className={styles.sidebarStatVal}>{dbStats.totalApplicants}</span>
-                <span className={styles.sidebarStatLabel}>Total applicants</span>
-              </div>
-              <div className={styles.sidebarStat}>
-                <span className={styles.sidebarStatVal}>{dbStats.totalApplications}</span>
-                <span className={styles.sidebarStatLabel}>Total applications</span>
-              </div>
-              <div className={styles.sidebarStat}>
-                <span className={styles.sidebarStatVal}>{dbStats.duplicates}</span>
-                <span className={styles.sidebarStatLabel}>Duplicates</span>
-              </div>
-            </>
-          )}
-        </div>
+
+        {Object.keys(dbStats).length > 0 && (
+          <div className={styles.sidebarStats}>
+            <div className={styles.sidebarStat}>
+              <span className={styles.sidebarStatVal}>{dbStats.totalApplicants ?? '—'}</span>
+              <span className={styles.sidebarStatLabel}>Total applicants</span>
+            </div>
+            <div className={styles.sidebarStat}>
+              <span className={styles.sidebarStatVal}>{dbStats.totalApplications ?? '—'}</span>
+              <span className={styles.sidebarStatLabel}>Applications</span>
+            </div>
+            <div className={styles.sidebarStat}>
+              <span className={styles.sidebarStatVal}>{dbStats.duplicates ?? '—'}</span>
+              <span className={styles.sidebarStatLabel}>Duplicates</span>
+            </div>
+          </div>
+        )}
+
         <div className={styles.sidebarFooter}>
           {dbMode
             ? <div className={styles.dbBadge}><Database size={12} /> Supabase live</div>
-            : <div className={styles.dbBadge} style={{ background: 'var(--amber-bg)', color: 'var(--amber-text)' }}>
-                <Database size={12} /> Local mode
-              </div>
+            : <div className={styles.dbBadgeLocal}><Database size={12} /> Local mode</div>
           }
         </div>
       </aside>
 
-      {/* Main */}
+      {/* ── Main ── */}
       <main className={styles.main}>
         {/* Topbar */}
         <div className={styles.topbar}>
@@ -163,14 +155,22 @@ export default function Dashboard() {
                 <RefreshCw size={14} className={loading ? styles.spin : ''} /> Refresh
               </button>
             )}
-            <button className={styles.btnPrimary} onClick={() => exportToCSV(displayed)} disabled={!displayed.length}>
+            <button
+              className={styles.btnPrimary}
+              onClick={() => exportToCSV(displayed)}
+              disabled={!displayed.length}
+            >
               <Download size={14} /> Export CSV
             </button>
           </div>
         </div>
 
-        {error   && <div className={styles.bannerError}>{error}</div>}
-        {uploadMsg && <div className={styles.bannerInfo}><RefreshCw size={13} className={styles.spin} /> {uploadMsg}</div>}
+        {error     && <div className={styles.bannerError}>{error}</div>}
+        {uploadMsg && (
+          <div className={styles.bannerInfo}>
+            <RefreshCw size={13} className={styles.spin} /> {uploadMsg}
+          </div>
+        )}
 
         <StatsBar applicants={displayed} dbStats={dbStats} />
 
@@ -198,7 +198,11 @@ export default function Dashboard() {
 
           <div className={styles.filterBtns}>
             {FILTER_OPTIONS.map(f => (
-              <button key={f} className={`${styles.filterBtn} ${filter === f ? styles.filterActive : ''}`} onClick={() => setFilter(f)}>
+              <button
+                key={f}
+                className={`${styles.filterBtn} ${filter === f ? styles.filterActive : ''}`}
+                onClick={() => setFilter(f)}
+              >
                 {f}
               </button>
             ))}
@@ -208,16 +212,21 @@ export default function Dashboard() {
         {/* Content */}
         {loading && (
           <div className={styles.empty}>
-            <RefreshCw size={24} className={styles.spin} />
-            <p>Loading from Supabase…</p>
+            <RefreshCw size={28} className={styles.spin} color="var(--text-faint)" />
+            <p className={styles.emptyHint}>Loading from Supabase…</p>
           </div>
         )}
 
-        {!loading && !displayed.length && !error && (
+        {!loading && !displayed.length && (
           <div className={styles.empty}>
-            <Upload size={32} strokeWidth={1.2} color="var(--text-faint)" />
+            <div className={styles.emptyIcon}>
+              <Upload size={28} strokeWidth={1.5} />
+            </div>
             <p className={styles.emptyTitle}>No data yet</p>
-            <p className={styles.emptyHint}>Upload a CSV or Excel file — all rows will be saved to Supabase</p>
+            <p className={styles.emptyHint}>
+              Upload a CSV or Excel file to get started.<br />
+              All rows will be saved to Supabase automatically.
+            </p>
             <button className={styles.btnPrimary} onClick={() => setShowUpload(true)}>
               <Upload size={14} /> Upload file
             </button>
@@ -239,7 +248,9 @@ export default function Dashboard() {
         )}
       </main>
 
-      {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)} />}
+      {showUpload && (
+        <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)} />
+      )}
     </div>
   )
 }
