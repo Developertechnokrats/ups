@@ -428,7 +428,7 @@ export default function Dashboard() {
 
       {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)}/>}
       {showVerify && <DbVerify onClose={() => setShowVerify(false)}/>}
-      {showGHLDiag && <GHLDiag onClose={() => setShowGHLDiag(false)} />}
+      {showGHLDiag && <GHLDiag onClose={() => setShowGHLDiag(false)} sampleApplicant={applicants[0] || null} />}
       {ghlPushList && (
         <GHLPushModal
           applicants={ghlPushList}
