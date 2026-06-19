@@ -1,29 +1,28 @@
 import styles from './StatsBar.module.css'
 import { Users, AlertCircle, Briefcase, TrendingUp } from 'lucide-react'
 
-export default function StatsBar({ applicants, totalRows }) {
-  const totalApps = applicants.reduce((s, a) => s + (a.applied_count || 0), 0)
-  const maxJobs = applicants.length ? Math.max(...applicants.map(a => a.applied_count)) : 0
+export default function StatsBar({ applicants, dbStats = {} }) {
+  const maxJobs   = applicants.length ? Math.max(...applicants.map(a => a.applied_count)) : 0
   const topPerson = applicants.find(a => a.applied_count === maxJobs)
 
   const stats = [
     {
       icon: <Users size={18} strokeWidth={1.5} />,
-      label: 'Total applications',
-      value: totalRows || '—',
+      label: 'Total applicants',
+      value: dbStats.totalApplicants ?? '—',
       color: 'blue'
+    },
+    {
+      icon: <Briefcase size={18} strokeWidth={1.5} />,
+      label: 'Total applications',
+      value: dbStats.totalApplications ?? '—',
+      color: 'amber'
     },
     {
       icon: <AlertCircle size={18} strokeWidth={1.5} />,
       label: 'Duplicate applicants',
-      value: applicants.length,
+      value: dbStats.duplicates ?? applicants.length,
       color: 'red'
-    },
-    {
-      icon: <Briefcase size={18} strokeWidth={1.5} />,
-      label: 'Duplicate applications',
-      value: totalApps,
-      color: 'amber'
     },
     {
       icon: <TrendingUp size={18} strokeWidth={1.5} />,
