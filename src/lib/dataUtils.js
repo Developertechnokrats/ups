@@ -29,23 +29,29 @@ const fmtDisplay = d => d ? format(d, 'dd MMM yyyy') : ''
 
 // ── Core row processor ───────────────────────────────────────────────────
 export function processRawRows(rows) {
-  const byKey = {}
+  // Always group by EMAIL — it is the unique key in Supabase.
+  // Using appId as the grouping key caused duplicates when the same person
+  // had multiple rows (multiple jobs), producing two applicantRows with the
+  // same email and triggering: ON CONFLICT DO UPDATE command cannot affect
+  // row a second time.
+  const byEmail = {}
   for (const r of rows) {
-    const appId = String(r['Applicant Id'] || r['applicant_id'] || '').trim()
     const email = (r['Email Address'] || r['Email'] || r['email'] || '').trim().toLowerCase()
-    const key   = appId || email
-    if (!key) continue
-    if (!byKey[key]) byKey[key] = []
-    byKey[key].push(r)
+    if (!email) continue
+    if (!byEmail[email]) byEmail[email] = []
+    byEmail[email].push(r)
   }
 
   const applicantRows   = []
   const applicationRows = []
+  const seenEmails      = new Set()
 
-  for (const apps of Object.values(byKey)) {
+  for (const [email, apps] of Object.entries(byEmail)) {
+    if (seenEmails.has(email)) continue
+    seenEmails.add(email)
+
     const first   = apps[0]
     const appId   = String(first['Applicant Id'] || first['applicant_id'] || '').trim() || null
-    const email   = (first['Email Address'] || first['Email'] || first['email'] || '').trim().toLowerCase()
     const dates   = apps.map(a => parseDate(a['Date'] || a['application_date'] || '')).filter(Boolean)
     const lastDate= dates.length ? new Date(Math.max(...dates.map(d => d.getTime()))) : null
     const startD  = parseDate(first['Start Date'] || first['start_date'] || '')

@@ -32,24 +32,29 @@ async function batchUpsert(table, rows, batchSize = 200, onConflict = null) {
 export async function upsertAllData(applicantRows, applicationRows, onProgress) {
   if (!supabase) throw new Error('Supabase not configured')
 
-  const total = applicantRows.length + applicationRows.length
-  let done = 0
+  // Final dedup by email before any DB call — prevents "ON CONFLICT DO UPDATE
+  // command cannot affect row a second time" when same email appears in multiple
+  // raw rows (people who applied for multiple jobs).
+  const seenEmails = new Set()
+  const dedupedApplicants = applicantRows.filter(a => {
+    if (!a.email || seenEmails.has(a.email)) return false
+    seenEmails.add(a.email)
+    return true
+  })
 
   // Step 1: upsert applicants in batches of 200
-  onProgress?.({ stage: 'applicants', done: 0, total: applicantRows.length })
-  for (let i = 0; i < applicantRows.length; i += 200) {
-    const batch = applicantRows.slice(i, i + 200)
+  for (let i = 0; i < dedupedApplicants.length; i += 200) {
+    const batch = dedupedApplicants.slice(i, i + 200)
     const { error } = await supabase
       .from('applicants')
       .upsert(batch, { onConflict: 'email' })
     if (error) throw new Error('Applicants save failed: ' + error.message)
-    done += batch.length
-    onProgress?.({ stage: 'applicants', done, total })
+    onProgress?.({ stage: 'applicants', done: Math.min(i + 200, dedupedApplicants.length), total: dedupedApplicants.length })
   }
 
   // Step 2: delete old applications for these emails (clean slate)
   // Do in chunks to avoid URL length limits
-  const emails = applicantRows.map(a => a.email)
+  const emails = dedupedApplicants.map(a => a.email)
   for (let i = 0; i < emails.length; i += 100) {
     const chunk = emails.slice(i, i + 100)
     const { error } = await supabase.from('applications').delete().in('email', chunk)
