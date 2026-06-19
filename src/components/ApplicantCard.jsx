@@ -48,7 +48,7 @@ export default function ApplicantCard({ applicant, index }) {
             .from('applications')
             .select('job_title, application_date, status_name, department')
             .eq('email', applicant.email)
-            .order('application_date', { ascending: false })
+            .order('application_date', { ascending: false, nullsFirst: false })
             .range(from, from + PAGE - 1)
           if (error) throw error
           if (!data || data.length === 0) break
