@@ -37,6 +37,14 @@ export default function ApplicantCard({ applicant, index }) {
           </div>
         </div>
         <div className={styles.badges}>
+          {applicant.tags && applicant.tags.split(' | ').map(tag => {
+            const c = CAT_COLORS[tag] || CAT_COLORS.Unarmed
+            return (
+              <span key={tag} className={styles.badge} style={{ background: c.bg, color: c.color }}>
+                {tag}
+              </span>
+            )
+          })}
           <span className={styles.badge} style={{ background: 'var(--blue-bg)', color: 'var(--blue-text)' }}>
             <Briefcase size={11} /> {applicant.applied_count} job{applicant.applied_count > 1 ? 's' : ''}
           </span>

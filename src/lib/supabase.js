@@ -103,3 +103,24 @@ export async function fetchStats() {
     duplicates:        r3.count ?? 0,
   }
 }
+
+// ── Fetch ALL applicants (including single-application ones) ──────────────
+export async function fetchAllApplicants({ fromDate, toDate } = {}) {
+  if (!supabase) throw new Error('Supabase not configured')
+  let query = supabase
+    .from('applicants')
+    .select(`*, applications (
+      id, job_id, job_title, job_code, department,
+      interviewing_managers, is_job_active,
+      application_date, status_id, status_name, job_status
+    )`)
+    .order('applied_count', { ascending: false })
+    .order('last_appointment_date', { ascending: false })
+
+  if (fromDate) query = query.gte('last_appointment_date', fromDate)
+  if (toDate)   query = query.lte('last_appointment_date', toDate)
+
+  const { data, error } = await query
+  if (error) throw error
+  return data || []
+}

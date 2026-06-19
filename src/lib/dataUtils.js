@@ -160,45 +160,65 @@ export function parseExcelStream(file, onProgress) {
   })
 }
 
+// ── Build tags from all job titles (deduped, sorted) ────────────────────
+export function buildTags(jobs = []) {
+  const cats = new Set(jobs.map(j => classifyJob(j.job_title || j.title || '')))
+  // Consistent order
+  return ['Armed','Unarmed','Admin','Supervisor'].filter(c => cats.has(c)).join(' | ')
+}
+
 // ── Enrich for display ───────────────────────────────────────────────────
 export function enrichForDisplay(applicants) {
-  return applicants.map(a => ({
-    ...a,
-    jobs: (a.applications || []).map(j => ({
+  return applicants.map(a => {
+    const jobs = (a.applications || []).map(j => ({
       title:    j.job_title    || '',
       date:     j.application_date ? fmtDisplay(new Date(j.application_date + 'T00:00:00')) : '',
       category: classifyJob(j.job_title || ''),
       status:   j.status_name || '',
       dept:     j.department  || '',
     }))
-  }))
+    return { ...a, jobs, tags: buildTags(jobs) }
+  })
 }
 
-// ── Export CSV ────────────────────────────────────────────────────────────
-export function exportToCSV(applicants) {
-  const headers = ['Firstname','Lastname','Email','Phone','Last Appointment Date','Applied Count','Notes']
-  const rows = applicants
-    .filter(a => a.applied_count > 1)
-    .map(a => {
-      const jobs = a.jobs || (a.applications || []).map(j => ({
-        title: j.job_title, date: j.application_date
-          ? fmtDisplay(new Date(j.application_date + 'T00:00:00')) : ''
-      }))
-      const notes = jobs.map(j => `${j.title} -- ${j.date}`).join(' | ')
-      const lastDate = a.last_appointment_date
-        ? fmtDisplay(new Date(a.last_appointment_date + 'T00:00:00')) : ''
-      return [
-        a.firstname, a.lastname, a.email, a.phone, lastDate, a.applied_count,
-        `"${notes.replace(/"/g, '""')}"`
-      ]
-    })
+// ── Export CSV — ALL applicants, with Tags column ─────────────────────────
+export function exportToCSV(applicants, filename = 'applicants') {
+  const headers = ['Firstname','Lastname','Email','Phone','Last Appointment Date','Applied Count','Tags','Notes']
+  const rows = applicants.map(a => {
+    const jobs = a.jobs || (a.applications || []).map(j => ({
+      title: j.job_title || '',
+      date:  j.application_date ? fmtDisplay(new Date(j.application_date + 'T00:00:00')) : ''
+    }))
+    const tags    = a.tags || buildTags(jobs)
+    const notes   = jobs.map(j => `${j.title} -- ${j.date}`).join(' | ')
+    const lastDate= a.last_appointment_date
+      ? fmtDisplay(new Date(a.last_appointment_date + 'T00:00:00')) : ''
+    return [
+      csvCell(a.firstname),
+      csvCell(a.lastname),
+      csvCell(a.email),
+      csvCell(a.phone),
+      csvCell(lastDate),
+      a.applied_count,
+      csvCell(tags),
+      csvCell(notes),
+    ]
+  })
 
   const csv  = [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n')
-  const blob = new Blob([csv], { type: 'text/csv' })
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
   const url  = URL.createObjectURL(blob)
   const el   = document.createElement('a')
   el.href     = url
-  el.download = `duplicate_applicants_${format(new Date(), 'yyyy-MM-dd')}.csv`
+  el.download = `${filename}_${format(new Date(), 'yyyy-MM-dd')}.csv`
   el.click()
   URL.revokeObjectURL(url)
+}
+
+function csvCell(val) {
+  if (val == null) return ''
+  const s = String(val)
+  return s.includes(',') || s.includes('"') || s.includes('\n')
+    ? `"${s.replace(/"/g, '""')}"`
+    : s
 }

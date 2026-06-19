@@ -1,33 +1,37 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Upload, Download, RefreshCw, Search, SlidersHorizontal, Database } from 'lucide-react'
-import { fetchDuplicates, fetchStats, upsertAllData, hasSupabase } from '../lib/supabase'
+import { Upload, Download, RefreshCw, Search, SlidersHorizontal, Database, Users, Copy } from 'lucide-react'
+import { fetchDuplicates, fetchAllApplicants, fetchStats, upsertAllData, hasSupabase } from '../lib/supabase'
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
 import ApplicantCard from '../components/ApplicantCard'
 import UploadZone from '../components/UploadZone'
 import styles from './Dashboard.module.css'
 
-const FILTER_OPTIONS = ['All', '2 jobs', '3 jobs', '4+ jobs']
+const JOB_FILTERS  = ['All', '1 job', '2 jobs', '3 jobs', '4+ jobs']
+const TAG_FILTERS  = ['Any type', 'Armed', 'Unarmed', 'Admin', 'Supervisor']
 
 export default function Dashboard() {
-  const [applicants, setApplicants] = useState([])
-  const [dbStats, setDbStats]       = useState({})
-  const [loading, setLoading]       = useState(false)
-  const [saveProgress, setSaveProgress] = useState(null)  // null | { stage, done, total }
-  const [showUpload, setShowUpload] = useState(false)
-  const [error, setError]           = useState('')
-  const [search, setSearch]         = useState('')
-  const [filter, setFilter]         = useState('All')
-  const [fromDate, setFromDate]     = useState('')
-  const [toDate, setToDate]         = useState('')
-  const [dbMode, setDbMode]         = useState(false)
+  const [applicants, setApplicants]     = useState([])
+  const [dbStats, setDbStats]           = useState({})
+  const [loading, setLoading]           = useState(false)
+  const [saveProgress, setSaveProgress] = useState(null)
+  const [showUpload, setShowUpload]     = useState(false)
+  const [error, setError]               = useState('')
+  const [search, setSearch]             = useState('')
+  const [jobFilter, setJobFilter]       = useState('All')
+  const [tagFilter, setTagFilter]       = useState('Any type')
+  const [fromDate, setFromDate]         = useState('')
+  const [toDate, setToDate]             = useState('')
+  const [viewMode, setViewMode]         = useState('all')   // 'all' | 'duplicates'
+  const [dbMode, setDbMode]             = useState(false)
 
-  async function loadFromDB() {
+  async function loadFromDB(mode = viewMode) {
     setLoading(true)
     setError('')
     try {
+      const fetchFn = mode === 'duplicates' ? fetchDuplicates : fetchAllApplicants
       const [data, stats] = await Promise.all([
-        fetchDuplicates({ fromDate: fromDate || undefined, toDate: toDate || undefined }),
+        fetchFn({ fromDate: fromDate || undefined, toDate: toDate || undefined }),
         fetchStats(),
       ])
       setApplicants(enrichForDisplay(data))
@@ -39,7 +43,13 @@ export default function Dashboard() {
     setLoading(false)
   }
 
-  useEffect(() => { if (hasSupabase) loadFromDB() }, [fromDate, toDate])
+  useEffect(() => { if (hasSupabase) loadFromDB(viewMode) }, [fromDate, toDate, viewMode])
+
+  function handleViewChange(mode) {
+    setViewMode(mode)
+    setJobFilter('All')
+    setTagFilter('Any type')
+  }
 
   async function handleUploadData(parsed) {
     const { applicantRows, applicationRows } = parsed
@@ -47,17 +57,13 @@ export default function Dashboard() {
     setError('')
 
     if (hasSupabase) {
-      setSaveProgress({ stage: 'applicants', done: 0, total: applicantRows.length + applicationRows.length })
+      setSaveProgress({ stage: 'applicants', done: 0, total: applicantRows.length })
       try {
         await upsertAllData(applicantRows, applicationRows, (prog) => {
-          setSaveProgress({
-            stage: prog.stage,
-            done:  prog.done,
-            total: prog.stage === 'applicants' ? applicantRows.length : applicationRows.length,
-          })
+          setSaveProgress({ stage: prog.stage, done: prog.done, total: prog.total })
         })
         setSaveProgress({ stage: 'done', done: 0, total: 0 })
-        await loadFromDB()
+        await loadFromDB(viewMode)
         setSaveProgress(null)
       } catch (e) {
         setSaveProgress(null)
@@ -75,24 +81,25 @@ export default function Dashboard() {
       if (!appMap[a.email]) appMap[a.email] = []
       appMap[a.email].push(a)
     }
-    const enriched = applicantRows
-      .filter(a => a.applied_count > 1)
-      .map(a => ({ ...a, applications: appMap[a.email] || [] }))
-    setApplicants(enrichForDisplay(enriched))
+    const enriched = viewMode === 'duplicates'
+      ? applicantRows.filter(a => a.applied_count > 1)
+      : applicantRows
+    setApplicants(enrichForDisplay(
+      enriched.map(a => ({ ...a, applications: appMap[a.email] || [] }))
+    ))
     setDbStats({
       totalApplicants:   applicantRows.length,
       totalApplications: applicationRows.length,
-      duplicates:        enriched.length,
+      duplicates:        applicantRows.filter(a => a.applied_count > 1).length,
     })
   }
 
-  // Save progress banner message
   const saveMsg = saveProgress
     ? saveProgress.stage === 'done'
-      ? 'Saved! Refreshing dashboard…'
+      ? 'Saved! Refreshing…'
       : saveProgress.stage === 'applicants'
-        ? `Saving applicants… ${saveProgress.done} / ${saveProgress.total}`
-        : `Saving applications… ${saveProgress.done} / ${saveProgress.total}`
+        ? `Saving applicants… ${saveProgress.done.toLocaleString()} / ${saveProgress.total.toLocaleString()}`
+        : `Saving applications… ${saveProgress.done.toLocaleString()} / ${saveProgress.total.toLocaleString()}`
     : ''
 
   const displayed = useMemo(() => {
@@ -102,14 +109,21 @@ export default function Dashboard() {
       list = list.filter(a =>
         `${a.firstname} ${a.lastname}`.toLowerCase().includes(q) ||
         (a.email || '').toLowerCase().includes(q) ||
+        (a.phone || '').includes(q) ||
         (a.jobs || []).some(j => (j.title || '').toLowerCase().includes(q))
       )
     }
-    if (filter === '2 jobs')       list = list.filter(a => a.applied_count === 2)
-    else if (filter === '3 jobs')  list = list.filter(a => a.applied_count === 3)
-    else if (filter === '4+ jobs') list = list.filter(a => a.applied_count >= 4)
+    if (jobFilter === '1 job')       list = list.filter(a => a.applied_count === 1)
+    else if (jobFilter === '2 jobs') list = list.filter(a => a.applied_count === 2)
+    else if (jobFilter === '3 jobs') list = list.filter(a => a.applied_count === 3)
+    else if (jobFilter === '4+ jobs')list = list.filter(a => a.applied_count >= 4)
+    if (tagFilter !== 'Any type') {
+      list = list.filter(a => (a.tags || '').includes(tagFilter))
+    }
     return list
-  }, [applicants, search, filter])
+  }, [applicants, search, jobFilter, tagFilter])
+
+  const exportFilename = viewMode === 'duplicates' ? 'duplicate_applicants' : 'all_applicants'
 
   return (
     <div className={styles.layout}>
@@ -121,23 +135,38 @@ export default function Dashboard() {
         </div>
 
         <nav className={styles.nav}>
-          <span className={`${styles.navItem} ${styles.active}`}>
-            <SlidersHorizontal size={16} /> Dashboard
-          </span>
+          <button
+            className={`${styles.navItem} ${viewMode === 'all' ? styles.active : ''}`}
+            onClick={() => handleViewChange('all')}
+          >
+            <Users size={15} /> All applicants
+            {dbStats.totalApplicants != null && (
+              <span className={styles.navCount}>{dbStats.totalApplicants.toLocaleString()}</span>
+            )}
+          </button>
+          <button
+            className={`${styles.navItem} ${viewMode === 'duplicates' ? styles.active : ''}`}
+            onClick={() => handleViewChange('duplicates')}
+          >
+            <Copy size={15} /> Duplicates only
+            {dbStats.duplicates != null && (
+              <span className={styles.navCountRed}>{dbStats.duplicates}</span>
+            )}
+          </button>
         </nav>
 
         {Object.keys(dbStats).length > 0 && (
           <div className={styles.sidebarStats}>
             <div className={styles.sidebarStat}>
-              <span className={styles.sidebarStatVal}>{(dbStats.totalApplicants ?? '—').toLocaleString?.() ?? dbStats.totalApplicants}</span>
-              <span className={styles.sidebarStatLabel}>Total applicants</span>
+              <span className={styles.sidebarStatVal}>{(dbStats.totalApplicants ?? 0).toLocaleString()}</span>
+              <span className={styles.sidebarStatLabel}>Applicants</span>
             </div>
             <div className={styles.sidebarStat}>
-              <span className={styles.sidebarStatVal}>{(dbStats.totalApplications ?? '—').toLocaleString?.() ?? dbStats.totalApplications}</span>
+              <span className={styles.sidebarStatVal}>{(dbStats.totalApplications ?? 0).toLocaleString()}</span>
               <span className={styles.sidebarStatLabel}>Applications</span>
             </div>
             <div className={styles.sidebarStat}>
-              <span className={styles.sidebarStatVal}>{dbStats.duplicates ?? '—'}</span>
+              <span className={styles.sidebarStatVal}>{(dbStats.duplicates ?? 0).toLocaleString()}</span>
               <span className={styles.sidebarStatLabel}>Duplicates</span>
             </div>
           </div>
@@ -155,42 +184,48 @@ export default function Dashboard() {
       <main className={styles.main}>
         <div className={styles.topbar}>
           <div>
-            <h1 className={styles.pageTitle}>Duplicate Applicants</h1>
-            <p className={styles.pageSubtitle}>People who applied for more than one position</p>
+            <h1 className={styles.pageTitle}>
+              {viewMode === 'all' ? 'All Applicants' : 'Duplicate Applicants'}
+            </h1>
+            <p className={styles.pageSubtitle}>
+              {viewMode === 'all'
+                ? 'Every applicant from the uploaded file'
+                : 'People who applied for more than one position'}
+            </p>
           </div>
           <div className={styles.actions}>
             <button className={styles.btnSecondary} onClick={() => setShowUpload(true)} disabled={!!saveProgress}>
               <Upload size={14} /> Upload file
             </button>
             {hasSupabase && (
-              <button className={styles.btnSecondary} onClick={loadFromDB} disabled={loading || !!saveProgress}>
+              <button className={styles.btnSecondary} onClick={() => loadFromDB(viewMode)} disabled={loading || !!saveProgress}>
                 <RefreshCw size={14} className={loading ? styles.spin : ''} /> Refresh
               </button>
             )}
-            <button className={styles.btnPrimary} onClick={() => exportToCSV(displayed)} disabled={!displayed.length}>
-              <Download size={14} /> Export CSV
+            <button
+              className={styles.btnPrimary}
+              onClick={() => exportToCSV(displayed, exportFilename)}
+              disabled={!displayed.length}
+            >
+              <Download size={14} /> Export CSV ({displayed.length.toLocaleString()})
             </button>
           </div>
         </div>
 
         {error && <div className={styles.bannerError}>{error}</div>}
-
         {saveProgress && (
           <div className={styles.bannerInfo}>
             <RefreshCw size={13} className={styles.spin} />
             <span>{saveMsg}</span>
             {saveProgress.total > 0 && (
               <div className={styles.savePBar}>
-                <div
-                  className={styles.savePFill}
-                  style={{ width: `${Math.round((saveProgress.done / saveProgress.total) * 100)}%` }}
-                />
+                <div className={styles.savePFill} style={{ width: `${Math.round((saveProgress.done / saveProgress.total) * 100)}%` }} />
               </div>
             )}
           </div>
         )}
 
-        <StatsBar applicants={displayed} dbStats={dbStats} />
+        <StatsBar applicants={displayed} dbStats={dbStats} viewMode={viewMode} />
 
         {/* Toolbar */}
         <div className={styles.toolbar}>
@@ -198,7 +233,7 @@ export default function Dashboard() {
             <Search size={14} className={styles.searchIcon} />
             <input
               className={styles.search}
-              placeholder="Search name, email, job title…"
+              placeholder="Search name, email, phone, job title…"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
@@ -213,13 +248,29 @@ export default function Dashboard() {
               <button className={styles.clearDate} onClick={() => { setFromDate(''); setToDate('') }}>Clear</button>
             )}
           </div>
+        </div>
 
-          <div className={styles.filterBtns}>
-            {FILTER_OPTIONS.map(f => (
-              <button key={f} className={`${styles.filterBtn} ${filter === f ? styles.filterActive : ''}`} onClick={() => setFilter(f)}>
-                {f}
-              </button>
-            ))}
+        {/* Second toolbar row — type + job count filters */}
+        <div className={styles.toolbar} style={{ marginTop: '-8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span className={styles.filterRowLabel}>Type</span>
+            <div className={styles.filterBtns}>
+              {TAG_FILTERS.map(f => (
+                <button key={f} className={`${styles.filterBtn} ${tagFilter === f ? styles.filterActive : ''}`} onClick={() => setTagFilter(f)}>
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span className={styles.filterRowLabel}>Count</span>
+            <div className={styles.filterBtns}>
+              {JOB_FILTERS.map(f => (
+                <button key={f} className={`${styles.filterBtn} ${jobFilter === f ? styles.filterActive : ''}`} onClick={() => setJobFilter(f)}>
+                  {f}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -235,7 +286,10 @@ export default function Dashboard() {
           <div className={styles.empty}>
             <div className={styles.emptyIcon}><Upload size={24} strokeWidth={1.5} /></div>
             <p className={styles.emptyTitle}>No data yet</p>
-            <p className={styles.emptyHint}>Upload a CSV or Excel file to get started.<br />All rows are saved to Supabase and persist across sessions.</p>
+            <p className={styles.emptyHint}>
+              Upload a CSV or Excel file to get started.<br />
+              All rows are saved to Supabase and persist across sessions.
+            </p>
             <button className={styles.btnPrimary} onClick={() => setShowUpload(true)}>
               <Upload size={14} /> Upload file
             </button>
