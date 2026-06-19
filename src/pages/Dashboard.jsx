@@ -8,8 +8,8 @@ import UploadZone from '../components/UploadZone'
 import DbVerify from '../components/DbVerify'
 import styles from './Dashboard.module.css'
 
-const JOB_FILTERS  = ['All', '1 job', '2 jobs', '3 jobs', '4+ jobs']
-const TAG_FILTERS  = ['Any type', 'Armed', 'Unarmed', 'Admin', 'Supervisor']
+const JOB_FILTERS = ['All', '1 job', '2 jobs', '3 jobs', '4+ jobs']
+const TAG_FILTERS = ['Any type', 'Armed', 'Unarmed', 'Admin', 'Supervisor']
 
 export default function Dashboard() {
   const [applicants, setApplicants]     = useState([])
@@ -17,17 +17,19 @@ export default function Dashboard() {
   const [loading, setLoading]           = useState(false)
   const [saveProgress, setSaveProgress] = useState(null)
   const [showUpload, setShowUpload]     = useState(false)
+  const [showVerify, setShowVerify]     = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [clearing, setClearing]         = useState(false)
   const [error, setError]               = useState('')
   const [search, setSearch]             = useState('')
   const [jobFilter, setJobFilter]       = useState('All')
   const [tagFilter, setTagFilter]       = useState('Any type')
   const [fromDate, setFromDate]         = useState('')
   const [toDate, setToDate]             = useState('')
-  const [viewMode, setViewMode]         = useState('all')   // 'all' | 'duplicates'
+  const [viewMode, setViewMode]         = useState('all')
   const [dbMode, setDbMode]             = useState(false)
-  const [confirmClear, setConfirmClear] = useState(false)
-  const [clearing, setClearing]         = useState(false)
 
+  // ── Load from Supabase ──────────────────────────────────────────────────
   async function loadFromDB(mode = viewMode) {
     setLoading(true)
     setError('')
@@ -37,7 +39,6 @@ export default function Dashboard() {
         fetchFn({ fromDate: fromDate || undefined, toDate: toDate || undefined }),
         fetchStats(),
       ])
-      // enrich each row individually — a bad date on one row won't crash the whole list
       const enriched = []
       for (const row of (data || [])) {
         try { enriched.push(...enrichForDisplay([row])) }
@@ -60,6 +61,7 @@ export default function Dashboard() {
     setTagFilter('Any type')
   }
 
+  // ── Upload ──────────────────────────────────────────────────────────────
   async function handleUploadData(parsed) {
     const { applicantRows, applicationRows } = parsed
     setShowUpload(false)
@@ -77,25 +79,30 @@ export default function Dashboard() {
       } catch (e) {
         setSaveProgress(null)
         setError('Save failed: ' + e.message + ' — showing data locally.')
-        showLocal(applicantRows, applicationRows)
+        showLocalData(applicantRows, applicationRows)
       }
     } else {
-      showLocal(applicantRows, applicationRows)
+      showLocalData(applicantRows, applicationRows)
     }
   }
 
-  function showLocal(applicantRows, applicationRows) {
+  function showLocalData(applicantRows, applicationRows) {
     const appMap = {}
     for (const a of applicationRows) {
       if (!appMap[a.email]) appMap[a.email] = []
       appMap[a.email].push(a)
     }
-    const enriched = viewMode === 'duplicates'
+    const toEnrich = (viewMode === 'duplicates'
       ? applicantRows.filter(a => a.applied_count > 1)
       : applicantRows
-    setApplicants(enrichForDisplay(
-      enriched.map(a => ({ ...a, applications: appMap[a.email] || [] }))
-    ))
+    ).map(a => ({ ...a, applications: appMap[a.email] || [] }))
+
+    const enriched = []
+    for (const row of toEnrich) {
+      try { enriched.push(...enrichForDisplay([row])) }
+      catch (_) { enriched.push({ ...row, jobs: [], tags: '' }) }
+    }
+    setApplicants(enriched)
     setDbStats({
       totalApplicants:   applicantRows.length,
       totalApplications: applicationRows.length,
@@ -103,6 +110,7 @@ export default function Dashboard() {
     })
   }
 
+  // ── Clear ───────────────────────────────────────────────────────────────
   async function handleClear() {
     setClearing(true)
     setError('')
@@ -118,24 +126,21 @@ export default function Dashboard() {
     setClearing(false)
   }
 
+  // ── Progress message ────────────────────────────────────────────────────
   function buildSaveMsg(p) {
     if (!p) return ''
     if (p.stage === 'done') return 'Saved! Refreshing…'
     if (p.stage === 'clearing') return 'Clearing old data…'
     const pct = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0
     const label = p.stage === 'applicants' ? 'Saving applicants' : 'Saving applications'
-    // ETA: 500 rows/batch @ ~300ms avg per batch (network + 50ms pause)
-    const BATCH = 500
-    const MS_PER_BATCH = 300
-    const batchesLeft = Math.ceil((p.total - p.done) / BATCH)
-    const etaSec = Math.round((batchesLeft * MS_PER_BATCH) / 1000)
-    const etaStr = etaSec > 3
-      ? ` · ~${etaSec < 60 ? etaSec + 's' : Math.ceil(etaSec / 60) + 'm'} left`
-      : ''
+    const BATCH = 500, MS_PER_BATCH = 300
+    const etaSec = Math.round((Math.ceil((p.total - p.done) / BATCH) * MS_PER_BATCH) / 1000)
+    const etaStr = etaSec > 3 ? ` · ~${etaSec < 60 ? etaSec + 's' : Math.ceil(etaSec / 60) + 'm'} left` : ''
     return `${label}… ${p.done.toLocaleString()} / ${p.total.toLocaleString()} (${pct}%)${etaStr}`
   }
   const saveMsg = buildSaveMsg(saveProgress)
 
+  // ── Filter ──────────────────────────────────────────────────────────────
   const displayed = useMemo(() => {
     let list = [...applicants]
     if (search) {
@@ -147,13 +152,11 @@ export default function Dashboard() {
         (a.jobs || []).some(j => (j.title || '').toLowerCase().includes(q))
       )
     }
-    if (jobFilter === '1 job')       list = list.filter(a => a.applied_count === 1)
-    else if (jobFilter === '2 jobs') list = list.filter(a => a.applied_count === 2)
-    else if (jobFilter === '3 jobs') list = list.filter(a => a.applied_count === 3)
-    else if (jobFilter === '4+ jobs')list = list.filter(a => a.applied_count >= 4)
-    if (tagFilter !== 'Any type') {
-      list = list.filter(a => (a.tags || '').includes(tagFilter))
-    }
+    if (jobFilter === '1 job')        list = list.filter(a => a.applied_count === 1)
+    else if (jobFilter === '2 jobs')  list = list.filter(a => a.applied_count === 2)
+    else if (jobFilter === '3 jobs')  list = list.filter(a => a.applied_count === 3)
+    else if (jobFilter === '4+ jobs') list = list.filter(a => a.applied_count >= 4)
+    if (tagFilter !== 'Any type')     list = list.filter(a => (a.tags || '').includes(tagFilter))
     return list
   }, [applicants, search, jobFilter, tagFilter])
 
@@ -161,6 +164,7 @@ export default function Dashboard() {
 
   return (
     <div className={styles.layout}>
+
       {/* ── Sidebar ── */}
       <aside className={styles.sidebar}>
         <div className={styles.brand}>
@@ -169,22 +173,16 @@ export default function Dashboard() {
         </div>
 
         <nav className={styles.nav}>
-          <button
-            className={`${styles.navItem} ${viewMode === 'all' ? styles.active : ''}`}
-            onClick={() => handleViewChange('all')}
-          >
+          <button className={`${styles.navItem} ${viewMode === 'all' ? styles.active : ''}`} onClick={() => handleViewChange('all')}>
             <Users size={15} /> All applicants
             {dbStats.totalApplicants != null && (
               <span className={styles.navCount}>{dbStats.totalApplicants.toLocaleString()}</span>
             )}
           </button>
-          <button
-            className={`${styles.navItem} ${viewMode === 'duplicates' ? styles.active : ''}`}
-            onClick={() => handleViewChange('duplicates')}
-          >
+          <button className={`${styles.navItem} ${viewMode === 'duplicates' ? styles.active : ''}`} onClick={() => handleViewChange('duplicates')}>
             <Copy size={15} /> Duplicates only
             {dbStats.duplicates != null && (
-              <span className={styles.navCountRed}>{dbStats.duplicates}</span>
+              <span className={styles.navCountRed}>{dbStats.duplicates.toLocaleString()}</span>
             )}
           </button>
         </nav>
@@ -221,16 +219,12 @@ export default function Dashboard() {
 
       {/* ── Main ── */}
       <main className={styles.main}>
+
+        {/* Topbar */}
         <div className={styles.topbar}>
           <div>
-            <h1 className={styles.pageTitle}>
-              {viewMode === 'all' ? 'All Applicants' : 'Duplicate Applicants'}
-            </h1>
-            <p className={styles.pageSubtitle}>
-              {viewMode === 'all'
-                ? 'Every applicant from the uploaded file'
-                : 'People who applied for more than one position'}
-            </p>
+            <h1 className={styles.pageTitle}>{viewMode === 'all' ? 'All Applicants' : 'Duplicate Applicants'}</h1>
+            <p className={styles.pageSubtitle}>{viewMode === 'all' ? 'Every applicant from the uploaded file' : 'People who applied for more than one position'}</p>
           </div>
           <div className={styles.actions}>
             <button className={styles.btnSecondary} onClick={() => setShowUpload(true)} disabled={!!saveProgress}>
@@ -255,11 +249,7 @@ export default function Dashboard() {
                 <button className={styles.btnSecondary} onClick={() => setConfirmClear(false)}>Cancel</button>
               </div>
             )}
-            <button
-              className={styles.btnPrimary}
-              onClick={() => exportToCSV(displayed, exportFilename)}
-              disabled={!displayed.length}
-            >
+            <button className={styles.btnPrimary} onClick={() => exportToCSV(displayed, exportFilename)} disabled={!displayed.length}>
               <Download size={14} /> Export CSV ({displayed.length.toLocaleString()})
             </button>
           </div>
@@ -272,10 +262,7 @@ export default function Dashboard() {
             <span style={{ flex: 1 }}>{saveMsg}</span>
             {saveProgress.total > 0 && (
               <div className={styles.savePBar}>
-                <div
-                  className={styles.savePFill}
-                  style={{ width: `${Math.min(100, Math.round((saveProgress.done / saveProgress.total) * 100))}%` }}
-                />
+                <div className={styles.savePFill} style={{ width: `${Math.min(100, Math.round((saveProgress.done / saveProgress.total) * 100))}%` }} />
               </div>
             )}
           </div>
@@ -287,14 +274,8 @@ export default function Dashboard() {
         <div className={styles.toolbar}>
           <div className={styles.searchWrap}>
             <Search size={14} className={styles.searchIcon} />
-            <input
-              className={styles.search}
-              placeholder="Search name, email, phone, job title…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
+            <input className={styles.search} placeholder="Search name, email, phone, job title…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-
           <div className={styles.dateRange}>
             <label className={styles.dateLabel}>Start date from</label>
             <input type="date" className={styles.dateInput} value={fromDate} onChange={e => setFromDate(e.target.value)} />
@@ -306,15 +287,12 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Second toolbar row — type + job count filters */}
         <div className={styles.toolbar} style={{ marginTop: '-8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span className={styles.filterRowLabel}>Type</span>
             <div className={styles.filterBtns}>
               {TAG_FILTERS.map(f => (
-                <button key={f} className={`${styles.filterBtn} ${tagFilter === f ? styles.filterActive : ''}`} onClick={() => setTagFilter(f)}>
-                  {f}
-                </button>
+                <button key={f} className={`${styles.filterBtn} ${tagFilter === f ? styles.filterActive : ''}`} onClick={() => setTagFilter(f)}>{f}</button>
               ))}
             </div>
           </div>
@@ -322,9 +300,7 @@ export default function Dashboard() {
             <span className={styles.filterRowLabel}>Count</span>
             <div className={styles.filterBtns}>
               {JOB_FILTERS.map(f => (
-                <button key={f} className={`${styles.filterBtn} ${jobFilter === f ? styles.filterActive : ''}`} onClick={() => setJobFilter(f)}>
-                  {f}
-                </button>
+                <button key={f} className={`${styles.filterBtn} ${jobFilter === f ? styles.filterActive : ''}`} onClick={() => setJobFilter(f)}>{f}</button>
               ))}
             </div>
           </div>
@@ -342,13 +318,8 @@ export default function Dashboard() {
           <div className={styles.empty}>
             <div className={styles.emptyIcon}><Upload size={24} strokeWidth={1.5} /></div>
             <p className={styles.emptyTitle}>No data yet</p>
-            <p className={styles.emptyHint}>
-              Upload a CSV or Excel file to get started.<br />
-              All rows are saved to Supabase and persist across sessions.
-            </p>
-            <button className={styles.btnPrimary} onClick={() => setShowUpload(true)}>
-              <Upload size={14} /> Upload file
-            </button>
+            <p className={styles.emptyHint}>Upload a CSV or Excel file to get started.<br />All rows are saved to Supabase and persist across sessions.</p>
+            <button className={styles.btnPrimary} onClick={() => setShowUpload(true)}><Upload size={14} /> Upload file</button>
           </div>
         )}
 
