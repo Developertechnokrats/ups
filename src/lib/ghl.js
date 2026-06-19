@@ -124,17 +124,18 @@ async function upsertContact(applicant) {
   return data?.contact?.id || data?.id || null
 }
 
-// ── STEP 3: Add note ───────────────────────────────────────────────────────
+// ── STEP 3: Add note — format: "Job Title -- DD Mon YYYY" per line ────────
 async function addNote(contactId, applicant) {
   const body = buildNoteBody(applicant)
   await ghlFetch('POST', `/contacts/${contactId}/notes/`, { body, userId: '' }, 'Add note')
 }
 
-// ── STEP 4: Update tags (v3 uses PUT, merges with existing) ───────────────
+// ── STEP 4: Add tags — POST /contacts/:id/tags (no trailing slash on id) ──
 async function updateTags(contactId, existingTags, newTagsStr) {
   const newTags = newTagsStr.split(' | ').map(t => t.trim()).filter(Boolean)
   const merged  = [...new Set([...(existingTags || []), ...newTags])]
-  await ghlFetch('PUT', `/contacts/${contactId}/tags/`, { tags: merged }, 'Update tags')
+  // v3: POST /contacts/:contactId/tags  (NOT PUT, NOT with trailing slash)
+  await ghlFetch('POST', `/contacts/${contactId}/tags`, { tags: merged }, 'Add tags')
 }
 
 // ── Test push — single contact, full step log ─────────────────────────────
@@ -259,12 +260,12 @@ export async function pushSingleToGHL(applicant) {
 }
 
 function buildNoteBody(applicant) {
-  return [
-    `Applied Count: ${applicant.applied_count}`,
-    `Last Application Date: ${applicant.last_appointment_date || 'N/A'}`,
-    `Tags: ${applicant.tags || 'N/A'}`,
-    '',
-    'Job Applications:',
-    ...(applicant.notes || '').split(' | ').map((n, i) => `${i + 1}. ${n}`),
-  ].join('\n')
+  // Build clean job list from notes string: "Title -- Date | Title -- Date"
+  // Output format per job: "Gatehouse Security Officer- 77019 -- 17 Jun 2026"
+  const jobLines = (applicant.notes || '')
+    .split(' | ')
+    .filter(Boolean)
+    .map(line => line.trim())
+
+  return jobLines.join('\n')
 }
