@@ -106,7 +106,7 @@ export default function GHLPushModal({ applicants, onClose, onComplete }) {
                   <div key={i} className={`${styles.resultRow} ${r.success ? styles.resultOk : styles.resultErr}`}>
                     {r.success ? <CheckCircle size={12}/> : <XCircle size={12}/>}
                     <span className={styles.resultEmail}>{r.email}</span>
-                    <span className={styles.resultMsg}>{r.success ? `ID: ${r.contactId}` : r.error}</span>
+                    <span className={styles.resultMsg}>{r.success ? `✓ ${r.contactId}` : `✗ ${r.error}`}</span>
                   </div>
                 ))}
               </div>
@@ -142,7 +142,7 @@ export default function GHLPushModal({ applicants, onClose, onComplete }) {
                 {progress.results.filter(r => !r.success).map((r, i) => (
                   <div key={i} className={styles.errorListRow}>
                     <span className={styles.resultEmail}>{r.email}</span>
-                    <span className={styles.errorMsg}>{r.error}</span>
+                    <span className={styles.errorMsg}>{r.error}{r.log?.length ? ` (steps: ${r.log.slice(-2).join(" → ")})` : ""}</span>
                   </div>
                 ))}
               </div>

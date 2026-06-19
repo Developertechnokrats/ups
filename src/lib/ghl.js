@@ -1,24 +1,12 @@
 // ── GoHighLevel API service — v2 ──────────────────────────────────────────
-// Base URL: https://services.leadconnectorhq.com  (GHL v2)
-// Required headers: Authorization, Version, Location-Id
 
-const GHL_BASE    = 'https://services.leadconnectorhq.com'
+const GHL_BASE = 'https://services.leadconnectorhq.com'
 
-function getConfig() {
+export function getConfig() {
   return {
-    token:      import.meta.env.VITE_GHL_TOKEN,
-    locationId: import.meta.env.VITE_GHL_LOCATION_ID,
+    token:      import.meta.env.VITE_GHL_TOKEN      || '',
+    locationId: import.meta.env.VITE_GHL_LOCATION_ID || '',
     version:    import.meta.env.VITE_GHL_API_VERSION || '2021-07-28',
-  }
-}
-
-function headers() {
-  const { token, locationId, version } = getConfig()
-  return {
-    'Authorization': `Bearer ${token}`,
-    'Version':       version,
-    'Location-Id':   locationId,
-    'Content-Type':  'application/json',
   }
 }
 
@@ -27,7 +15,110 @@ export function isGHLConfigured() {
   return !!(token && locationId)
 }
 
-// ── Rate limiter ──────────────────────────────────────────────────────────
+function headers() {
+  const { token, locationId, version } = getConfig()
+  return {
+    'Authorization': `Bearer ${token}`,
+    'Version':       version,
+    'Content-Type':  'application/json',
+  }
+}
+
+// ── API call wrapper — captures full error details ────────────────────────
+async function ghlFetch(method, path, body = null, label = '') {
+  const url = `${GHL_BASE}${path}`
+  const opts = {
+    method,
+    headers: headers(),
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  }
+
+  let res
+  try {
+    res = await fetch(url, opts)
+  } catch(networkErr) {
+    throw new GHLError({
+      label,
+      url,
+      status: 0,
+      message: `Network error: ${networkErr.message}`,
+      hint: 'Check your internet connection or if GHL API is reachable. This may also be a CORS issue — GHL API may block browser requests directly.',
+    })
+  }
+
+  // Try to parse body regardless of status
+  let data
+  try { data = await res.json() } catch(_) { data = {} }
+
+  if (!res.ok) {
+    throw new GHLError({
+      label,
+      url,
+      status:  res.status,
+      message: data?.message || data?.error || `HTTP ${res.status}`,
+      raw:     data,
+      hint:    getHint(res.status, data),
+    })
+  }
+
+  return data
+}
+
+function getHint(status, data) {
+  if (status === 401) return 'Bearer token is invalid or expired. Check VITE_GHL_TOKEN.'
+  if (status === 403) return 'Token does not have permission for this action, or Location ID is wrong.'
+  if (status === 404) return 'Endpoint not found. Check API version in VITE_GHL_API_VERSION.'
+  if (status === 422) return `Validation error: ${JSON.stringify(data?.errors || data)}`
+  if (status === 429) return 'Rate limited by GHL. Reduce batch size or increase pause time.'
+  if (status >= 500)  return 'GHL server error. Try again later.'
+  return ''
+}
+
+class GHLError extends Error {
+  constructor({ label, url, status, message, raw, hint }) {
+    super(message)
+    this.label   = label
+    this.url     = url
+    this.status  = status
+    this.raw     = raw
+    this.hint    = hint
+    this.name    = 'GHLError'
+  }
+  toString() {
+    const parts = [`[${this.status}] ${this.message}`]
+    if (this.hint)  parts.push(`Hint: ${this.hint}`)
+    if (this.label) parts.push(`Step: ${this.label}`)
+    return parts.join(' — ')
+  }
+}
+
+// ── Test connection ───────────────────────────────────────────────────────
+export async function testGHLConnection() {
+  const { locationId } = getConfig()
+  const steps = []
+
+  // Step 1: fetch location info
+  try {
+    const data = await ghlFetch('GET', `/locations/${locationId}`, null, 'Fetch location')
+    steps.push({ step: 'Fetch location', ok: true, detail: `Location: ${data?.location?.name || data?.name || 'OK'}` })
+  } catch(e) {
+    steps.push({ step: 'Fetch location', ok: false, detail: e.toString() })
+    return { ok: false, steps }
+  }
+
+  // Step 2: try contact lookup (harmless GET)
+  try {
+    await ghlFetch('GET', `/contacts/?locationId=${locationId}&limit=1`, null, 'List contacts')
+    steps.push({ step: 'List contacts', ok: true, detail: 'Contact API accessible' })
+  } catch(e) {
+    steps.push({ step: 'List contacts', ok: false, detail: e.toString() })
+    return { ok: false, steps }
+  }
+
+  return { ok: true, steps }
+}
+
+// ── Batch push ────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 export async function batchPushToGHL(applicants, onProgress) {
@@ -39,122 +130,81 @@ export async function batchPushToGHL(applicants, onProgress) {
     const batch = applicants.slice(i, i + BATCH_SIZE)
     const batchResults = await Promise.all(batch.map(a => pushSingleToGHL(a)))
     results.push(...batchResults)
-    onProgress?.({
-      done:    Math.min(i + BATCH_SIZE, applicants.length),
-      total:   applicants.length,
-      results: [...results],
-    })
+    onProgress?.({ done: Math.min(i + BATCH_SIZE, applicants.length), total: applicants.length, results: [...results] })
     if (i + BATCH_SIZE < applicants.length) await sleep(PAUSE_MS)
   }
   return results
 }
 
-// ── Push a single applicant ───────────────────────────────────────────────
+// ── Push single applicant ─────────────────────────────────────────────────
 export async function pushSingleToGHL(applicant) {
-  try {
-    const { locationId } = getConfig()
+  const { locationId } = getConfig()
+  const log = []
 
-    // 1. Look up by email
-    const existing = await lookupContactByEmail(applicant.email, locationId)
+  try {
+    // 1. Lookup
+    let existing = null
+    try {
+      const res = await ghlFetch('GET', `/contacts/?locationId=${locationId}&email=${encodeURIComponent(applicant.email)}`, null, 'Lookup contact')
+      existing = res?.contacts?.[0] || null
+      log.push(`Lookup: ${existing ? 'found existing ID ' + existing.id : 'not found'}`)
+    } catch(e) {
+      throw new Error(`Lookup failed — ${e.toString()}`)
+    }
 
     // 2. Create or update
     const payload = buildPayload(applicant, locationId)
     let contactId
 
     if (existing?.id) {
-      await updateContact(existing.id, payload)
-      contactId = existing.id
+      try {
+        await ghlFetch('PUT', `/contacts/${existing.id}`, payload, 'Update contact')
+        contactId = existing.id
+        log.push(`Updated contact ${contactId}`)
+      } catch(e) {
+        throw new Error(`Update failed — ${e.toString()}`)
+      }
     } else {
-      const created = await createContact(payload)
-      contactId = created?.contact?.id || created?.id
+      try {
+        const created = await ghlFetch('POST', `/contacts/`, payload, 'Create contact')
+        contactId = created?.contact?.id || created?.id
+        log.push(`Created contact ${contactId}`)
+      } catch(e) {
+        throw new Error(`Create failed — ${e.toString()}`)
+      }
     }
 
-    if (!contactId) throw new Error('No contact ID returned from GHL')
+    if (!contactId) throw new Error('GHL returned no contact ID after create/update')
 
-    // 3. Add note
-    if (applicant.notes || applicant.applied_count) {
-      await addNote(contactId, buildNoteBody(applicant))
+    // 3. Note
+    try {
+      await ghlFetch('POST', `/contacts/${contactId}/notes/`, { body: buildNoteBody(applicant), userId: '' }, 'Add note')
+      log.push('Note added')
+    } catch(e) {
+      log.push(`Note failed (non-fatal): ${e.message}`)
+      // Don't throw — note failure is non-fatal
     }
 
-    // 4. Merge tags (never remove existing)
+    // 4. Tags
     if (applicant.tags) {
-      await updateTags(contactId, existing?.tags || [], applicant.tags)
+      try {
+        const newTags = applicant.tags.split(' | ').map(t => t.trim()).filter(Boolean)
+        const merged  = [...new Set([...(existing?.tags || []), ...newTags])]
+        await ghlFetch('POST', `/contacts/${contactId}/tags/`, { tags: merged }, 'Update tags')
+        log.push(`Tags updated: ${merged.join(', ')}`)
+      } catch(e) {
+        log.push(`Tags failed (non-fatal): ${e.message}`)
+      }
     }
 
-    return { email: applicant.email, contactId, success: true }
+    return { email: applicant.email, contactId, success: true, log }
+
   } catch(e) {
-    return { email: applicant.email, success: false, error: e.message }
+    return { email: applicant.email, success: false, error: e.message, log }
   }
 }
 
-// ── GHL v2 API calls ──────────────────────────────────────────────────────
-
-async function lookupContactByEmail(email, locationId) {
-  const res = await fetch(
-    `${GHL_BASE}/contacts/?locationId=${locationId}&email=${encodeURIComponent(email)}`,
-    { headers: headers() }
-  )
-  if (!res.ok) return null
-  const data = await res.json()
-  return data?.contacts?.[0] || null
-}
-
-async function createContact(payload) {
-  const res = await fetch(`${GHL_BASE}/contacts/`, {
-    method:  'POST',
-    headers: headers(),
-    body:    JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err?.message || `GHL create failed (${res.status})`)
-  }
-  return res.json()
-}
-
-async function updateContact(contactId, payload) {
-  const res = await fetch(`${GHL_BASE}/contacts/${contactId}`, {
-    method:  'PUT',
-    headers: headers(),
-    body:    JSON.stringify(payload),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err?.message || `GHL update failed (${res.status})`)
-  }
-  return res.json()
-}
-
-async function addNote(contactId, body) {
-  const res = await fetch(`${GHL_BASE}/contacts/${contactId}/notes/`, {
-    method:  'POST',
-    headers: headers(),
-    body:    JSON.stringify({ body, userId: '' }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err?.message || `GHL note failed (${res.status})`)
-  }
-  return res.json()
-}
-
-async function updateTags(contactId, existingTags, newTagsStr) {
-  const newTags = newTagsStr.split(' | ').map(t => t.trim()).filter(Boolean)
-  const merged  = [...new Set([...(existingTags || []), ...newTags])]
-  const res = await fetch(`${GHL_BASE}/contacts/${contactId}/tags/`, {
-    method:  'POST',
-    headers: headers(),
-    body:    JSON.stringify({ tags: merged }),
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err?.message || `GHL tags failed (${res.status})`)
-  }
-  return res.json()
-}
-
-// ── Payload builder ───────────────────────────────────────────────────────
-
+// ── Payload ───────────────────────────────────────────────────────────────
 function buildPayload(applicant, locationId) {
   return {
     locationId,
@@ -163,26 +213,19 @@ function buildPayload(applicant, locationId) {
     email:     applicant.email     || '',
     phone:     applicant.phone     || '',
     customFields: [
-      {
-        id:    'last_application_date',   // replace with your GHL custom field key/id
-        value: applicant.last_appointment_date || '',
-      },
-      {
-        id:    'total_application',        // replace with your GHL custom field key/id
-        value: String(applicant.applied_count || 0),
-      },
+      { id: 'last_application_date', value: applicant.last_appointment_date || '' },
+      { id: 'total_application',     value: String(applicant.applied_count || 0)  },
     ],
   }
 }
 
 function buildNoteBody(applicant) {
-  const lines = [
+  return [
     `Applied Count: ${applicant.applied_count}`,
     `Last Application Date: ${applicant.last_appointment_date || 'N/A'}`,
     `Tags: ${applicant.tags || 'N/A'}`,
     '',
     'Job Applications:',
     ...(applicant.notes || '').split(' | ').map((n, i) => `${i + 1}. ${n}`),
-  ]
-  return lines.join('\n')
+  ].join('\n')
 }

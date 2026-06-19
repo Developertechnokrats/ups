@@ -9,6 +9,7 @@ import UploadZone from '../components/UploadZone'
 import DbVerify from '../components/DbVerify'
 import ApplicantModal from '../components/ApplicantModal'
 import GHLPushModal from '../components/GHLPushModal'
+import GHLDiag from '../components/GHLDiag'
 import styles from './Dashboard.module.css'
 
 const TAG_FILTERS = ['Any type', 'Armed', 'Unarmed', 'Admin', 'Supervisor']
@@ -35,7 +36,8 @@ export default function Dashboard() {
   const [dbMode, setDbMode]             = useState(false)
   const [selectedApplicant, setSelectedApplicant] = useState(null)
   const [selectedIndex, setSelectedIndex]         = useState(0)
-  const [ghlPushList, setGhlPushList]             = useState(null)  // null | applicant[]
+  const [ghlPushList, setGhlPushList]             = useState(null)
+  const [showGHLDiag, setShowGHLDiag]           = useState(false)
   const [exporting, setExporting]       = useState(false)
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
@@ -230,6 +232,9 @@ export default function Dashboard() {
 
         <div className={styles.sidebarFooter}>
           {hasSupabase && <button className={styles.verifyBtn} onClick={() => setShowVerify(true)}><ShieldCheck size={13}/> Verify DB</button>}
+          {import.meta.env.VITE_GHL_TOKEN && (
+            <button className={styles.verifyBtn} style={{color:'var(--amber-text)',borderColor:'var(--amber)'}} onClick={() => setShowGHLDiag(true)}><Zap size={13}/> GHL Diagnostics</button>
+          )}
           {dbMode ? <div className={styles.dbBadge}><Database size={12}/> Supabase live</div>
                   : <div className={styles.dbBadgeLocal}><Database size={12}/> Local mode</div>}
         </div>
@@ -423,6 +428,7 @@ export default function Dashboard() {
 
       {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)}/>}
       {showVerify && <DbVerify onClose={() => setShowVerify(false)}/>}
+      {showGHLDiag && <GHLDiag onClose={() => setShowGHLDiag(false)} />}
       {ghlPushList && (
         <GHLPushModal
           applicants={ghlPushList}
