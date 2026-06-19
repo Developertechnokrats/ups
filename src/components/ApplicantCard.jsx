@@ -56,15 +56,13 @@ export default function ApplicantCard({ applicant, index }) {
           if (data.length < PAGE) break
           from += PAGE
         }
-        setJobs(allJobs
-          .sort((a, b) => {
-            // Sort latest application_date first, nulls last
-            if (!a.application_date && !b.application_date) return 0
-            if (!a.application_date) return 1
-            if (!b.application_date) return -1
-            return b.application_date.localeCompare(a.application_date)
-          })
-          .map(j => ({
+        // Sort ALL fetched jobs by date descending BEFORE converting to display format
+        allJobs.sort((a, b) => {
+          const da = a.application_date ? new Date(a.application_date).getTime() : 0
+          const db = b.application_date ? new Date(b.application_date).getTime() : 0
+          return db - da  // latest first, nulls (0) last
+        })
+        setJobs(allJobs.map(j => ({
           title:    j.job_title    || '',
           date:     safeDisplayDate(j.application_date),
           category: classifyJob(j.job_title || ''),
