@@ -260,12 +260,20 @@ export async function pushSingleToGHL(applicant) {
 }
 
 function buildNoteBody(applicant) {
-  // Build clean job list from notes string: "Title -- Date | Title -- Date"
-  // Output format per job: "Gatehouse Security Officer- 77019 -- 17 Jun 2026"
-  const jobLines = (applicant.notes || '')
-    .split(' | ')
-    .filter(Boolean)
-    .map(line => line.trim())
+  // notes is stored as "Title -- Date | Title -- Date"
+  // jobs array may also be available (from on-demand fetch)
+  let lines = []
 
-  return jobLines.join('\n')
+  if (applicant.notes && applicant.notes.trim()) {
+    lines = applicant.notes.split(' | ').map(l => l.trim()).filter(Boolean)
+  } else if (applicant.jobs && applicant.jobs.length) {
+    lines = applicant.jobs.map(j => `${j.title} -- ${j.date || j.application_date || ''}`)
+  }
+
+  if (!lines.length) {
+    // Fallback so body is never empty
+    lines = [`Applied for ${applicant.applied_count || 0} position(s). Last date: ${applicant.last_appointment_date || 'N/A'}`]
+  }
+
+  return lines.join('\n')
 }

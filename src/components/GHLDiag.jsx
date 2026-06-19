@@ -3,11 +3,11 @@ import { Zap, CheckCircle, XCircle, RefreshCw, X, Send } from 'lucide-react'
 import { testGHLConnection, testPushSingle, getConfig, isGHLConfigured } from '../lib/ghl'
 import styles from './GHLDiag.module.css'
 
-export default function GHLDiag({ onClose, sampleApplicant }) {
-  const [testing, setTesting]       = useState(false)
+export default function GHLDiag({ onClose, sampleApplicant, onPrepareSample }) {
+  const [testing, setTesting]         = useState(false)
   const [pushTesting, setPushTesting] = useState(false)
-  const [connResult, setConnResult] = useState(null)
-  const [pushResult, setPushResult] = useState(null)
+  const [connResult, setConnResult]   = useState(null)
+  const [pushResult, setPushResult]   = useState(null)
 
   const cfg        = getConfig()
   const configured = isGHLConfigured()
@@ -23,7 +23,9 @@ export default function GHLDiag({ onClose, sampleApplicant }) {
     if (!sampleApplicant) return
     setPushTesting(true)
     setPushResult(null)
-    const res = await testPushSingle(sampleApplicant)
+    // Fetch notes first if handler provided
+    const applicant = onPrepareSample ? await onPrepareSample(sampleApplicant) : sampleApplicant
+    const res = await testPushSingle(applicant)
     setPushResult(res)
     setPushTesting(false)
   }

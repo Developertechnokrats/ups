@@ -192,3 +192,53 @@ export async function updateGHLStatus(results) {
       .eq('email', r.email)
   }
 }
+
+// ── Fetch applicants with full notes built from applications ──────────────
+// Used before GHL push so notes is never empty
+export async function buildNotesForApplicants(applicants) {
+  if (!supabase || !applicants.length) return applicants
+
+  const emails = applicants.map(a => a.email).filter(Boolean)
+
+  // Fetch all applications for these emails
+  const allApps = []
+  for (let i = 0; i < emails.length; i += 200) {
+    const chunk = emails.slice(i, i + 200)
+    let from = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('applications')
+        .select('email, job_title, application_date')
+        .in('email', chunk)
+        .order('application_date', { ascending: false })
+        .range(from, from + 999)
+      if (error) break
+      if (!data || data.length === 0) break
+      allApps.push(...data)
+      if (data.length < 1000) break
+      from += 1000
+    }
+  }
+
+  // Group by email
+  const appMap = {}
+  for (const a of allApps) {
+    if (!appMap[a.email]) appMap[a.email] = []
+    appMap[a.email].push(a)
+  }
+
+  // Build notes string for each applicant
+  return applicants.map(a => {
+    const jobs = appMap[a.email] || []
+    if (!jobs.length) return a
+    const notes = jobs
+      .map(j => {
+        const dateStr = j.application_date
+          ? new Date(j.application_date + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+          : ''
+        return `${j.job_title} -- ${dateStr}`
+      })
+      .join(' | ')
+    return { ...a, notes }
+  })
+}

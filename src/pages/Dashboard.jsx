@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight, Zap } from 'lucide-react'
-import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, hasSupabase, PAGE_SIZE } from '../lib/supabase'
+import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, buildNotesForApplicants, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 export const hasGHL = !!import.meta.env.VITE_GHL_TOKEN
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
@@ -280,7 +280,9 @@ export default function Dashboard() {
                   }) : displayed
                   const rows = hasSupabase ? enrich(raw) : raw
                   const toSend = tagFilter === 'Any type' ? rows : rows.filter(a => (a.tags||'').includes(tagFilter))
-                  setGhlPushList(toSend)
+                  // Build notes from DB applications before pushing
+                  const withNotes = hasSupabase ? await buildNotesForApplicants(toSend) : toSend
+                  setGhlPushList(withNotes)
                 } catch(e) { setError('GHL prep failed: ' + e.message) }
                 setExporting(false)
               }} disabled={!totalCount || exporting}>
@@ -381,7 +383,10 @@ export default function Dashboard() {
                 applicant={a}
                 index={i}
                 onViewDetails={(applicant, idx) => { setSelectedApplicant(applicant); setSelectedIndex(idx) }}
-                onPushGHL={import.meta.env.VITE_GHL_TOKEN ? (a) => setGhlPushList([a]) : null}
+                onPushGHL={import.meta.env.VITE_GHL_TOKEN ? async (a) => {
+                  const withNotes = hasSupabase ? await buildNotesForApplicants([a]) : [a]
+                  setGhlPushList(withNotes)
+                } : null}
               />
             ))}
 
@@ -428,7 +433,14 @@ export default function Dashboard() {
 
       {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)}/>}
       {showVerify && <DbVerify onClose={() => setShowVerify(false)}/>}
-      {showGHLDiag && <GHLDiag onClose={() => setShowGHLDiag(false)} sampleApplicant={applicants[0] || null} />}
+      {showGHLDiag && <GHLDiag
+        onClose={() => setShowGHLDiag(false)}
+        sampleApplicant={applicants[0] || null}
+        onPrepareSample={async (a) => {
+          const withNotes = hasSupabase ? await buildNotesForApplicants([a]) : [a]
+          return withNotes[0]
+        }}
+      />}
       {ghlPushList && (
         <GHLPushModal
           applicants={ghlPushList}
