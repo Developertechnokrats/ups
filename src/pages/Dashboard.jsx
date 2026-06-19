@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Upload, Download, RefreshCw, Search, SlidersHorizontal, Database, Users, Copy, Trash2, ShieldCheck } from 'lucide-react'
-import { fetchDuplicates, fetchAllApplicants, fetchStats, upsertAllData, clearAllData, hasSupabase } from '../lib/supabase'
+import { useState, useEffect, useCallback } from 'react'
+import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight } from 'lucide-react'
+import { fetchPage, fetchStats, upsertAllData, clearAllData, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
 import ApplicantCard from '../components/ApplicantCard'
@@ -8,12 +8,13 @@ import UploadZone from '../components/UploadZone'
 import DbVerify from '../components/DbVerify'
 import styles from './Dashboard.module.css'
 
-const JOB_FILTERS = ['All', '1 job', '2 jobs', '3 jobs', '4+ jobs']
 const TAG_FILTERS = ['Any type', 'Armed', 'Unarmed', 'Admin', 'Supervisor']
 
 export default function Dashboard() {
   const [applicants, setApplicants]     = useState([])
+  const [totalCount, setTotalCount]     = useState(0)
   const [dbStats, setDbStats]           = useState({})
+  const [currentPage, setCurrentPage]   = useState(0)
   const [loading, setLoading]           = useState(false)
   const [saveProgress, setSaveProgress] = useState(null)
   const [showUpload, setShowUpload]     = useState(false)
@@ -21,47 +22,82 @@ export default function Dashboard() {
   const [confirmClear, setConfirmClear] = useState(false)
   const [clearing, setClearing]         = useState(false)
   const [error, setError]               = useState('')
-  const [search, setSearch]             = useState('')
-  const [jobFilter, setJobFilter]       = useState('All')
+  // Search is only triggered on button click or Enter — not on every keystroke
+  const [searchInput, setSearchInput]   = useState('')
+  const [activeSearch, setActiveSearch] = useState('')
   const [tagFilter, setTagFilter]       = useState('Any type')
   const [fromDate, setFromDate]         = useState('')
   const [toDate, setToDate]             = useState('')
   const [viewMode, setViewMode]         = useState('all')
   const [dbMode, setDbMode]             = useState(false)
 
-  // ── Load from Supabase ──────────────────────────────────────────────────
-  async function loadFromDB(mode = viewMode) {
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE)
+
+  // ── Fetch one page ────────────────────────────────────────────────────
+  async function loadPage(page, opts = {}) {
     setLoading(true)
     setError('')
     try {
-      const fetchFn = mode === 'duplicates' ? fetchDuplicates : fetchAllApplicants
-      const [data, stats] = await Promise.all([
-        fetchFn({ fromDate: fromDate || undefined, toDate: toDate || undefined }),
+      const search  = opts.search  ?? activeSearch
+      const from    = opts.from    ?? fromDate
+      const to      = opts.to      ?? toDate
+      const mode    = opts.mode    ?? viewMode
+
+      const [result, stats] = await Promise.all([
+        fetchPage({ fromDate: from || undefined, toDate: to || undefined, duplicatesOnly: mode === 'duplicates', page, search }),
         fetchStats(),
       ])
-      const enriched = []
-      for (const row of (data || [])) {
-        try { enriched.push(...enrichForDisplay([row])) }
-        catch (_) { enriched.push({ ...row, jobs: [], tags: '' }) }
+
+      // Join applicants + applications, enrich safely
+      const appMap = {}
+      for (const a of result.applications) {
+        if (!appMap[a.email]) appMap[a.email] = []
+        appMap[a.email].push(a)
       }
+      const enriched = []
+      for (const row of result.applicants) {
+        try {
+          enriched.push(...enrichForDisplay([{ ...row, applications: appMap[row.email] || [] }]))
+        } catch(_) {
+          enriched.push({ ...row, jobs: [], tags: '' })
+        }
+      }
+
       setApplicants(enriched)
+      setTotalCount(result.totalCount)
+      setCurrentPage(page)
       setDbStats(stats)
       setDbMode(true)
-    } catch (e) {
+    } catch(e) {
       setError('Supabase fetch error: ' + e.message)
     }
     setLoading(false)
   }
 
-  useEffect(() => { if (hasSupabase) loadFromDB(viewMode) }, [fromDate, toDate, viewMode])
+  // Reload page 0 when filters change
+  useEffect(() => {
+    if (hasSupabase) loadPage(0)
+  }, [fromDate, toDate, viewMode, activeSearch])
+
+  function handleSearch() {
+    setActiveSearch(searchInput)
+    setCurrentPage(0)
+  }
 
   function handleViewChange(mode) {
     setViewMode(mode)
-    setJobFilter('All')
     setTagFilter('Any type')
+    setSearchInput('')
+    setActiveSearch('')
+    setCurrentPage(0)
   }
 
-  // ── Upload ──────────────────────────────────────────────────────────────
+  function handleDateClear() {
+    setFromDate('')
+    setToDate('')
+  }
+
+  // ── Upload ───────────────────────────────────────────────────────────
   async function handleUploadData(parsed) {
     const { applicantRows, applicationRows } = parsed
     setShowUpload(false)
@@ -70,97 +106,66 @@ export default function Dashboard() {
     if (hasSupabase) {
       setSaveProgress({ stage: 'applicants', done: 0, total: applicantRows.length })
       try {
-        await upsertAllData(applicantRows, applicationRows, (prog) => {
-          setSaveProgress({ stage: prog.stage, done: prog.done, total: prog.total })
-        })
+        await upsertAllData(applicantRows, applicationRows, prog => setSaveProgress({ ...prog }))
         setSaveProgress({ stage: 'done', done: 0, total: 0 })
-        await loadFromDB(viewMode)
+        await loadPage(0)
         setSaveProgress(null)
-      } catch (e) {
+      } catch(e) {
         setSaveProgress(null)
-        setError('Save failed: ' + e.message + ' — showing data locally.')
-        showLocalData(applicantRows, applicationRows)
+        setError('Save failed: ' + e.message + ' — showing locally.')
+        // Show locally
+        const appMap = {}
+        for (const a of applicationRows) { if (!appMap[a.email]) appMap[a.email] = []; appMap[a.email].push(a) }
+        const src = viewMode === 'duplicates' ? applicantRows.filter(a => a.applied_count > 1) : applicantRows
+        const enriched = []
+        for (const row of src.slice(0, PAGE_SIZE)) {
+          try { enriched.push(...enrichForDisplay([{ ...row, applications: appMap[row.email] || [] }])) }
+          catch(_) { enriched.push({ ...row, jobs: [], tags: '' }) }
+        }
+        setApplicants(enriched)
+        setTotalCount(src.length)
+        setDbStats({ totalApplicants: applicantRows.length, totalApplications: applicationRows.length, duplicates: applicantRows.filter(a => a.applied_count > 1).length })
       }
     } else {
-      showLocalData(applicantRows, applicationRows)
+      const appMap = {}
+      for (const a of applicationRows) { if (!appMap[a.email]) appMap[a.email] = []; appMap[a.email].push(a) }
+      const src = viewMode === 'duplicates' ? applicantRows.filter(a => a.applied_count > 1) : applicantRows
+      const enriched = []
+      for (const row of src.slice(0, PAGE_SIZE)) {
+        try { enriched.push(...enrichForDisplay([{ ...row, applications: appMap[row.email] || [] }])) }
+        catch(_) { enriched.push({ ...row, jobs: [], tags: '' }) }
+      }
+      setApplicants(enriched)
+      setTotalCount(src.length)
+      setDbStats({ totalApplicants: applicantRows.length, totalApplications: applicationRows.length, duplicates: applicantRows.filter(a => a.applied_count > 1).length })
     }
   }
 
-  function showLocalData(applicantRows, applicationRows) {
-    const appMap = {}
-    for (const a of applicationRows) {
-      if (!appMap[a.email]) appMap[a.email] = []
-      appMap[a.email].push(a)
-    }
-    const toEnrich = (viewMode === 'duplicates'
-      ? applicantRows.filter(a => a.applied_count > 1)
-      : applicantRows
-    ).map(a => ({ ...a, applications: appMap[a.email] || [] }))
-
-    const enriched = []
-    for (const row of toEnrich) {
-      try { enriched.push(...enrichForDisplay([row])) }
-      catch (_) { enriched.push({ ...row, jobs: [], tags: '' }) }
-    }
-    setApplicants(enriched)
-    setDbStats({
-      totalApplicants:   applicantRows.length,
-      totalApplications: applicationRows.length,
-      duplicates:        applicantRows.filter(a => a.applied_count > 1).length,
-    })
-  }
-
-  // ── Clear ───────────────────────────────────────────────────────────────
+  // ── Clear ─────────────────────────────────────────────────────────────
   async function handleClear() {
     setClearing(true)
     setError('')
     try {
       await clearAllData()
-      setApplicants([])
-      setDbStats({})
-      setDbMode(false)
-      setConfirmClear(false)
-    } catch (e) {
-      setError('Clear failed: ' + e.message)
-    }
+      setApplicants([]); setTotalCount(0); setDbStats({}); setDbMode(false); setConfirmClear(false)
+    } catch(e) { setError('Clear failed: ' + e.message) }
     setClearing(false)
   }
 
-  // ── Progress message ────────────────────────────────────────────────────
-  function buildSaveMsg(p) {
+  // ── Progress message ──────────────────────────────────────────────────
+  function saveMsg(p) {
     if (!p) return ''
     if (p.stage === 'done') return 'Saved! Refreshing…'
     if (p.stage === 'clearing') return 'Clearing old data…'
     const pct = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0
     const label = p.stage === 'applicants' ? 'Saving applicants' : 'Saving applications'
-    const BATCH = 500, MS_PER_BATCH = 300
-    const etaSec = Math.round((Math.ceil((p.total - p.done) / BATCH) * MS_PER_BATCH) / 1000)
-    const etaStr = etaSec > 3 ? ` · ~${etaSec < 60 ? etaSec + 's' : Math.ceil(etaSec / 60) + 'm'} left` : ''
-    return `${label}… ${p.done.toLocaleString()} / ${p.total.toLocaleString()} (${pct}%)${etaStr}`
+    const etaSec = Math.round(Math.ceil((p.total - p.done) / 500) * 0.35)
+    const eta = etaSec > 3 ? ` · ~${etaSec < 60 ? etaSec + 's' : Math.ceil(etaSec/60) + 'm'} left` : ''
+    return `${label}… ${p.done.toLocaleString()} / ${p.total.toLocaleString()} (${pct}%)${eta}`
   }
-  const saveMsg = buildSaveMsg(saveProgress)
 
-  // ── Filter ──────────────────────────────────────────────────────────────
-  const displayed = useMemo(() => {
-    let list = [...applicants]
-    if (search) {
-      const q = search.toLowerCase()
-      list = list.filter(a =>
-        `${a.firstname} ${a.lastname}`.toLowerCase().includes(q) ||
-        (a.email || '').toLowerCase().includes(q) ||
-        (a.phone || '').includes(q) ||
-        (a.jobs || []).some(j => (j.title || '').toLowerCase().includes(q))
-      )
-    }
-    if (jobFilter === '1 job')        list = list.filter(a => a.applied_count === 1)
-    else if (jobFilter === '2 jobs')  list = list.filter(a => a.applied_count === 2)
-    else if (jobFilter === '3 jobs')  list = list.filter(a => a.applied_count === 3)
-    else if (jobFilter === '4+ jobs') list = list.filter(a => a.applied_count >= 4)
-    if (tagFilter !== 'Any type')     list = list.filter(a => (a.tags || '').includes(tagFilter))
-    return list
-  }, [applicants, search, jobFilter, tagFilter])
-
-  const exportFilename = viewMode === 'duplicates' ? 'duplicate_applicants' : 'all_applicants'
+  // Client-side tag filter on loaded page
+  const displayed = tagFilter === 'Any type' ? applicants : applicants.filter(a => (a.tags||'').includes(tagFilter))
 
   return (
     <div className={styles.layout}>
@@ -173,84 +178,52 @@ export default function Dashboard() {
         </div>
 
         <nav className={styles.nav}>
-          <button className={`${styles.navItem} ${viewMode === 'all' ? styles.active : ''}`} onClick={() => handleViewChange('all')}>
-            <Users size={15} /> All applicants
-            {dbStats.totalApplicants != null && (
-              <span className={styles.navCount}>{dbStats.totalApplicants.toLocaleString()}</span>
-            )}
+          <button className={`${styles.navItem} ${viewMode==='all' ? styles.active : ''}`} onClick={() => handleViewChange('all')}>
+            <Users size={15}/> All applicants
+            {dbStats.totalApplicants != null && <span className={styles.navCount}>{dbStats.totalApplicants.toLocaleString()}</span>}
           </button>
-          <button className={`${styles.navItem} ${viewMode === 'duplicates' ? styles.active : ''}`} onClick={() => handleViewChange('duplicates')}>
-            <Copy size={15} /> Duplicates only
-            {dbStats.duplicates != null && (
-              <span className={styles.navCountRed}>{dbStats.duplicates.toLocaleString()}</span>
-            )}
+          <button className={`${styles.navItem} ${viewMode==='duplicates' ? styles.active : ''}`} onClick={() => handleViewChange('duplicates')}>
+            <Copy size={15}/> Duplicates only
+            {dbStats.duplicates != null && <span className={styles.navCountRed}>{dbStats.duplicates.toLocaleString()}</span>}
           </button>
         </nav>
 
         {Object.keys(dbStats).length > 0 && (
           <div className={styles.sidebarStats}>
-            <div className={styles.sidebarStat}>
-              <span className={styles.sidebarStatVal}>{(dbStats.totalApplicants ?? 0).toLocaleString()}</span>
-              <span className={styles.sidebarStatLabel}>Applicants</span>
-            </div>
-            <div className={styles.sidebarStat}>
-              <span className={styles.sidebarStatVal}>{(dbStats.totalApplications ?? 0).toLocaleString()}</span>
-              <span className={styles.sidebarStatLabel}>Applications</span>
-            </div>
-            <div className={styles.sidebarStat}>
-              <span className={styles.sidebarStatVal}>{(dbStats.duplicates ?? 0).toLocaleString()}</span>
-              <span className={styles.sidebarStatLabel}>Duplicates</span>
-            </div>
+            <div className={styles.sidebarStat}><span className={styles.sidebarStatVal}>{(dbStats.totalApplicants??0).toLocaleString()}</span><span className={styles.sidebarStatLabel}>Applicants</span></div>
+            <div className={styles.sidebarStat}><span className={styles.sidebarStatVal}>{(dbStats.totalApplications??0).toLocaleString()}</span><span className={styles.sidebarStatLabel}>Applications</span></div>
+            <div className={styles.sidebarStat}><span className={styles.sidebarStatVal}>{(dbStats.duplicates??0).toLocaleString()}</span><span className={styles.sidebarStatLabel}>Duplicates</span></div>
           </div>
         )}
 
         <div className={styles.sidebarFooter}>
-          {hasSupabase && (
-            <button className={styles.verifyBtn} onClick={() => setShowVerify(true)}>
-              <ShieldCheck size={13} /> Verify DB
-            </button>
-          )}
-          {dbMode
-            ? <div className={styles.dbBadge}><Database size={12} /> Supabase live</div>
-            : <div className={styles.dbBadgeLocal}><Database size={12} /> Local mode</div>
-          }
+          {hasSupabase && <button className={styles.verifyBtn} onClick={() => setShowVerify(true)}><ShieldCheck size={13}/> Verify DB</button>}
+          {dbMode ? <div className={styles.dbBadge}><Database size={12}/> Supabase live</div>
+                  : <div className={styles.dbBadgeLocal}><Database size={12}/> Local mode</div>}
         </div>
       </aside>
 
       {/* ── Main ── */}
       <main className={styles.main}>
 
-        {/* Topbar */}
         <div className={styles.topbar}>
           <div>
-            <h1 className={styles.pageTitle}>{viewMode === 'all' ? 'All Applicants' : 'Duplicate Applicants'}</h1>
-            <p className={styles.pageSubtitle}>{viewMode === 'all' ? 'Every applicant from the uploaded file' : 'People who applied for more than one position'}</p>
+            <h1 className={styles.pageTitle}>{viewMode==='all' ? 'All Applicants' : 'Duplicate Applicants'}</h1>
+            <p className={styles.pageSubtitle}>{viewMode==='all' ? 'Every applicant from the uploaded file' : 'People who applied for more than one position'}</p>
           </div>
           <div className={styles.actions}>
-            <button className={styles.btnSecondary} onClick={() => setShowUpload(true)} disabled={!!saveProgress}>
-              <Upload size={14} /> Upload file
-            </button>
-            {hasSupabase && (
-              <button className={styles.btnSecondary} onClick={() => loadFromDB(viewMode)} disabled={loading || !!saveProgress}>
-                <RefreshCw size={14} className={loading ? styles.spin : ''} /> Refresh
-              </button>
-            )}
-            {hasSupabase && !confirmClear && (
-              <button className={styles.btnDanger} onClick={() => setConfirmClear(true)} disabled={!!saveProgress || clearing}>
-                <Trash2 size={14} /> Clear DB
-              </button>
-            )}
+            <button className={styles.btnSecondary} onClick={() => setShowUpload(true)} disabled={!!saveProgress}><Upload size={14}/> Upload file</button>
+            {hasSupabase && <button className={styles.btnSecondary} onClick={() => loadPage(currentPage)} disabled={loading||!!saveProgress}><RefreshCw size={14} className={loading?styles.spin:''}/> Refresh</button>}
+            {hasSupabase && !confirmClear && <button className={styles.btnDanger} onClick={() => setConfirmClear(true)} disabled={!!saveProgress||clearing}><Trash2 size={14}/> Clear DB</button>}
             {hasSupabase && confirmClear && (
               <div className={styles.confirmRow}>
                 <span className={styles.confirmText}>Delete all data?</span>
-                <button className={styles.btnDangerSolid} onClick={handleClear} disabled={clearing}>
-                  {clearing ? 'Clearing…' : 'Yes, clear all'}
-                </button>
+                <button className={styles.btnDangerSolid} onClick={handleClear} disabled={clearing}>{clearing?'Clearing…':'Yes, clear all'}</button>
                 <button className={styles.btnSecondary} onClick={() => setConfirmClear(false)}>Cancel</button>
               </div>
             )}
-            <button className={styles.btnPrimary} onClick={() => exportToCSV(displayed, exportFilename)} disabled={!displayed.length}>
-              <Download size={14} /> Export CSV ({displayed.length.toLocaleString()})
+            <button className={styles.btnPrimary} onClick={() => exportToCSV(displayed, viewMode==='duplicates'?'duplicate_applicants':'all_applicants')} disabled={!displayed.length}>
+              <Download size={14}/> Export CSV ({displayed.length.toLocaleString()})
             </button>
           </div>
         </div>
@@ -258,68 +231,77 @@ export default function Dashboard() {
         {error && <div className={styles.bannerError}>{error}</div>}
         {saveProgress && (
           <div className={styles.bannerInfo}>
-            <RefreshCw size={13} className={styles.spin} />
-            <span style={{ flex: 1 }}>{saveMsg}</span>
+            <RefreshCw size={13} className={styles.spin}/>
+            <span style={{flex:1}}>{saveMsg(saveProgress)}</span>
             {saveProgress.total > 0 && (
               <div className={styles.savePBar}>
-                <div className={styles.savePFill} style={{ width: `${Math.min(100, Math.round((saveProgress.done / saveProgress.total) * 100))}%` }} />
+                <div className={styles.savePFill} style={{width:`${Math.min(100,Math.round(saveProgress.done/saveProgress.total*100))}%`}}/>
               </div>
             )}
           </div>
         )}
 
-        <StatsBar applicants={displayed} dbStats={dbStats} viewMode={viewMode} />
+        <StatsBar applicants={displayed} dbStats={dbStats} viewMode={viewMode} totalCount={totalCount}/>
 
-        {/* Toolbar */}
+        {/* Search + date toolbar */}
         <div className={styles.toolbar}>
           <div className={styles.searchWrap}>
-            <Search size={14} className={styles.searchIcon} />
-            <input className={styles.search} placeholder="Search name, email, phone, job title…" value={search} onChange={e => setSearch(e.target.value)} />
+            <Search size={14} className={styles.searchIcon}/>
+            <input
+              className={styles.search}
+              placeholder="Search name, email, phone…  then press Enter or click Search"
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+            />
+            {searchInput && (
+              <button className={styles.searchClear} onClick={() => { setSearchInput(''); setActiveSearch('') }}>✕</button>
+            )}
           </div>
+          <button className={styles.btnSecondary} onClick={handleSearch} disabled={loading}>
+            <Search size={14}/> Search
+          </button>
           <div className={styles.dateRange}>
             <label className={styles.dateLabel}>Start date from</label>
-            <input type="date" className={styles.dateInput} value={fromDate} onChange={e => setFromDate(e.target.value)} />
+            <input type="date" className={styles.dateInput} value={fromDate} onChange={e => setFromDate(e.target.value)}/>
             <label className={styles.dateLabel}>to</label>
-            <input type="date" className={styles.dateInput} value={toDate} onChange={e => setToDate(e.target.value)} />
-            {(fromDate || toDate) && (
-              <button className={styles.clearDate} onClick={() => { setFromDate(''); setToDate('') }}>Clear</button>
-            )}
+            <input type="date" className={styles.dateInput} value={toDate} onChange={e => setToDate(e.target.value)}/>
+            {(fromDate||toDate) && <button className={styles.clearDate} onClick={handleDateClear}>Clear</button>}
           </div>
         </div>
 
-        <div className={styles.toolbar} style={{ marginTop: '-8px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        {/* Type filter */}
+        <div className={styles.toolbar} style={{marginTop:'-8px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
             <span className={styles.filterRowLabel}>Type</span>
             <div className={styles.filterBtns}>
               {TAG_FILTERS.map(f => (
-                <button key={f} className={`${styles.filterBtn} ${tagFilter === f ? styles.filterActive : ''}`} onClick={() => setTagFilter(f)}>{f}</button>
+                <button key={f} className={`${styles.filterBtn} ${tagFilter===f?styles.filterActive:''}`} onClick={() => setTagFilter(f)}>{f}</button>
               ))}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span className={styles.filterRowLabel}>Count</span>
-            <div className={styles.filterBtns}>
-              {JOB_FILTERS.map(f => (
-                <button key={f} className={`${styles.filterBtn} ${jobFilter === f ? styles.filterActive : ''}`} onClick={() => setJobFilter(f)}>{f}</button>
-              ))}
+          {activeSearch && (
+            <div className={styles.searchBadge}>
+              Searching: <strong>"{activeSearch}"</strong>
+              <button onClick={() => { setSearchInput(''); setActiveSearch('') }}>✕</button>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Content */}
         {loading && (
           <div className={styles.empty}>
-            <div className={styles.emptyIcon}><RefreshCw size={22} className={styles.spin} /></div>
-            <p className={styles.emptyHint}>Loading from Supabase…</p>
+            <div className={styles.emptyIcon}><RefreshCw size={22} className={styles.spin}/></div>
+            <p className={styles.emptyHint}>Loading page {currentPage+1}…</p>
           </div>
         )}
 
-        {!loading && !displayed.length && !saveProgress && (
+        {!loading && !applicants.length && !saveProgress && (
           <div className={styles.empty}>
-            <div className={styles.emptyIcon}><Upload size={24} strokeWidth={1.5} /></div>
+            <div className={styles.emptyIcon}><Upload size={24} strokeWidth={1.5}/></div>
             <p className={styles.emptyTitle}>No data yet</p>
-            <p className={styles.emptyHint}>Upload a CSV or Excel file to get started.<br />All rows are saved to Supabase and persist across sessions.</p>
-            <button className={styles.btnPrimary} onClick={() => setShowUpload(true)}><Upload size={14} /> Upload file</button>
+            <p className={styles.emptyHint}>Upload a CSV or Excel file to get started.<br/>All rows are saved to Supabase and persist across sessions.</p>
+            <button className={styles.btnPrimary} onClick={() => setShowUpload(true)}><Upload size={14}/> Upload file</button>
           </div>
         )}
 
@@ -327,19 +309,55 @@ export default function Dashboard() {
           <div className={styles.cards}>
             <div className={styles.resultsRow}>
               <span className={styles.resultCount}>
-                {displayed.length.toLocaleString()} applicant{displayed.length !== 1 ? 's' : ''}
-                {search ? ` matching "${search}"` : ''}
+                Page {currentPage+1} of {totalPages} · {totalCount.toLocaleString()} total applicant{totalCount!==1?'s':''}
               </span>
             </div>
-            {displayed.map((a, i) => (
-              <ApplicantCard key={a.email || i} applicant={a} index={i} />
-            ))}
+
+            {displayed.map((a,i) => <ApplicantCard key={a.email||i} applicant={a} index={i}/>)}
+
+            {/* Pagination controls */}
+            {totalPages > 1 && (
+              <div className={styles.pagination}>
+                <button className={styles.pageBtn} onClick={() => loadPage(0)} disabled={currentPage===0||loading}>««</button>
+                <button className={styles.pageBtn} onClick={() => loadPage(currentPage-1)} disabled={currentPage===0||loading}>
+                  <ChevronLeft size={14}/>
+                </button>
+
+                {/* Page number pills */}
+                {Array.from({length: Math.min(7, totalPages)}, (_, i) => {
+                  let p
+                  if (totalPages <= 7) p = i
+                  else if (currentPage < 4) p = i
+                  else if (currentPage > totalPages - 5) p = totalPages - 7 + i
+                  else p = currentPage - 3 + i
+                  return (
+                    <button
+                      key={p}
+                      className={`${styles.pageBtn} ${p===currentPage?styles.pageBtnActive:''}`}
+                      onClick={() => loadPage(p)}
+                      disabled={loading}
+                    >
+                      {p+1}
+                    </button>
+                  )
+                })}
+
+                <button className={styles.pageBtn} onClick={() => loadPage(currentPage+1)} disabled={currentPage>=totalPages-1||loading}>
+                  <ChevronRight size={14}/>
+                </button>
+                <button className={styles.pageBtn} onClick={() => loadPage(totalPages-1)} disabled={currentPage>=totalPages-1||loading}>»»</button>
+
+                <span className={styles.pageInfo}>
+                  Showing {currentPage*PAGE_SIZE+1}–{Math.min((currentPage+1)*PAGE_SIZE, totalCount)} of {totalCount.toLocaleString()}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </main>
 
-      {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)} />}
-      {showVerify && <DbVerify onClose={() => setShowVerify(false)} />}
+      {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)}/>}
+      {showVerify && <DbVerify onClose={() => setShowVerify(false)}/>}
     </div>
   )
 }
