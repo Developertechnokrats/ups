@@ -22,7 +22,7 @@ function initials(first, last) {
 
 export default function ApplicantCard({ applicant, index }) {
   const [open, setOpen]         = useState(false)
-  const [jobs, setJobs]         = useState(applicant.jobs || [])
+  const [jobs, setJobs]         = useState(() => sortJobs(applicant.jobs || []))
   const [loadingJobs, setLoadingJobs] = useState(false)
   const [jobError, setJobError] = useState('')
 
@@ -56,18 +56,14 @@ export default function ApplicantCard({ applicant, index }) {
           if (data.length < PAGE) break
           from += PAGE
         }
-        // Sort ALL fetched jobs by date descending BEFORE converting to display format
-        allJobs.sort((a, b) => {
-          const da = a.application_date ? new Date(a.application_date).getTime() : 0
-          const db = b.application_date ? new Date(b.application_date).getTime() : 0
-          return db - da  // latest first, nulls (0) last
-        })
-        setJobs(allJobs.map(j => ({
-          title:    j.job_title    || '',
-          date:     safeDisplayDate(j.application_date),
-          category: classifyJob(j.job_title || ''),
-          status:   j.status_name  || '',
-          dept:     j.department   || '',
+        // Sort ALL collected jobs latest-first before converting to display format
+        setJobs(sortJobs(allJobs).map(j => ({
+          title:            j.job_title    || '',
+          date:             safeDisplayDate(j.application_date),
+          application_date: j.application_date || '',   // keep ISO for re-sort
+          category:         classifyJob(j.job_title || ''),
+          status:           j.status_name  || '',
+          dept:             j.department   || '',
         })))
       } catch(e) {
         setJobError('Could not load jobs: ' + e.message)
@@ -138,6 +134,21 @@ export default function ApplicantCard({ applicant, index }) {
       )}
     </div>
   )
+}
+
+function sortJobs(jobs) {
+  return [...jobs].sort((a, b) => {
+    // Raw DB jobs have application_date (ISO: "2026-04-17")
+    // Pre-enriched jobs have date (display: "17 Apr 2026") — parse both
+    const rawA = a.application_date || ''
+    const rawB = b.application_date || ''
+    const da = rawA ? new Date(rawA).getTime() : 0
+    const db = rawB ? new Date(rawB).getTime() : 0
+    if (da === 0 && db === 0) return 0
+    if (da === 0) return 1   // no date → push to bottom
+    if (db === 0) return -1
+    return db - da           // latest first
+  })
 }
 
 function deriveTags(jobs) {
