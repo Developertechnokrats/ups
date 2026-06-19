@@ -74,7 +74,7 @@ export function processRawRows(rows) {
       street_address_2:      (first['Street Address 2'] || '').trim(),
       zip_code:              (first['Zip Code']    || '').trim(),
       country:               (first['Country']     || '').trim(),
-      start_date:            startD ? startD.toISOString() : null,
+      start_date:            fmtISO(startD),   // store as plain DATE (yyyy-MM-dd), no timezone
       applied_count:         apps.length,
       last_appointment_date: fmtISO(lastDate),
     })
