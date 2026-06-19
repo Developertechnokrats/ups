@@ -1,25 +1,22 @@
-// ── GoHighLevel API service — supports v2 and v3 ──────────────────────────
+// ── GoHighLevel API — v3 ──────────────────────────────────────────────────
+// Base: https://services.leadconnectorhq.com
+// Auth: Bearer token + Version header
+
+const GHL_BASE = 'https://services.leadconnectorhq.com'
 
 export function getConfig() {
   return {
-    token:      import.meta.env.VITE_GHL_TOKEN        || '',
-    locationId: import.meta.env.VITE_GHL_LOCATION_ID  || '',
-    version:    import.meta.env.VITE_GHL_API_VERSION  || '2021-07-28',
-    fieldLastDate:  import.meta.env.VITE_GHL_FIELD_LAST_DATE  || 'last_application_date',
-    fieldTotalApps: import.meta.env.VITE_GHL_FIELD_TOTAL_APPS || 'total_application',
+    token:          import.meta.env.VITE_GHL_TOKEN               || '',
+    locationId:     import.meta.env.VITE_GHL_LOCATION_ID         || '',
+    version:        import.meta.env.VITE_GHL_API_VERSION         || 'v3',
+    fieldLastDate:  import.meta.env.VITE_GHL_FIELD_LAST_DATE     || 'contact.last_application_date',
+    fieldTotalApps: import.meta.env.VITE_GHL_FIELD_TOTAL_APPS    || 'contact.total_application',
   }
 }
 
 export function isGHLConfigured() {
   const { token, locationId } = getConfig()
   return !!(token && locationId)
-}
-
-// v3 uses a different base URL
-function getBase(version) {
-  return version === 'v3' || version === '2021-07-28'
-    ? 'https://services.leadconnectorhq.com'
-    : 'https://services.leadconnectorhq.com'
 }
 
 function headers() {
@@ -31,12 +28,9 @@ function headers() {
   }
 }
 
-// ── Core fetch wrapper with full error capture ────────────────────────────
+// ── Core fetch with full error detail ─────────────────────────────────────
 async function ghlFetch(method, path, body = null, label = '') {
-  const { version } = getConfig()
-  const base = getBase(version)
-  const url  = `${base}${path}`
-
+  const url = `${GHL_BASE}${path}`
   let res
   try {
     res = await fetch(url, {
@@ -52,117 +46,163 @@ async function ghlFetch(method, path, body = null, label = '') {
   try { data = await res.json() } catch(_) { data = {} }
 
   if (!res.ok) {
-    const msg = data?.message || data?.error || data?.msg || JSON.stringify(data)
+    const msg  = data?.message || data?.error || data?.msg || JSON.stringify(data)
     const hint = getHint(res.status, data)
     throw new Error(`[${res.status}] ${label}: ${msg}${hint ? ` — ${hint}` : ''}`)
   }
-
   return data
 }
 
 function getHint(status, data) {
-  if (status === 401) return 'Token invalid or expired — regenerate in GHL Agency → Settings → API Keys'
+  if (status === 401) return 'Token invalid/expired — regenerate in GHL Agency → Settings → API Keys'
   if (status === 403) return 'No permission or wrong Location ID'
   if (status === 404) return 'Endpoint not found — check API version'
   if (status === 422) return `Validation: ${JSON.stringify(data?.errors || data?.details || data)}`
-  if (status === 429) return 'Rate limited — slow down requests'
+  if (status === 429) return 'Rate limited'
   if (status >= 500)  return 'GHL server error'
   return ''
 }
 
-// ── Test connection ───────────────────────────────────────────────────────
+// ── Test connection ────────────────────────────────────────────────────────
 export async function testGHLConnection() {
   const { locationId } = getConfig()
   const steps = []
 
-  // Step 1: Fetch location
   try {
     const data = await ghlFetch('GET', `/locations/${locationId}`, null, 'Fetch location')
-    const name = data?.location?.name || data?.name || 'OK'
-    steps.push({ step: 'Fetch location', ok: true, detail: `Location: ${name}` })
+    steps.push({ step: 'Fetch location', ok: true, detail: `OK — ${data?.location?.name || data?.name || 'connected'}` })
   } catch(e) {
     steps.push({ step: 'Fetch location', ok: false, detail: e.message })
     return { ok: false, steps }
   }
 
-  // Step 2: List contacts
+  // Search API test — POST /contacts/search with empty query
   try {
-    await ghlFetch('GET', `/contacts/?locationId=${locationId}&limit=1`, null, 'List contacts')
-    steps.push({ step: 'List contacts', ok: true, detail: 'Contact API accessible' })
+    const data = await ghlFetch('POST', `/contacts/search`, {
+      locationId,
+      page: 1,
+      pageLimit: 1,
+      filters: [],
+    }, 'Search contacts')
+    steps.push({ step: 'Search contacts', ok: true, detail: `OK — ${data?.total ?? '?'} total contacts in location` })
   } catch(e) {
-    steps.push({ step: 'List contacts', ok: false, detail: e.message })
+    steps.push({ step: 'Search contacts', ok: false, detail: e.message })
     return { ok: false, steps }
   }
 
   return { ok: true, steps }
 }
 
-// ── Test push — single contact with full logging ──────────────────────────
-export async function testPushSingle(applicant) {
+// ── STEP 1: Search contact by email → returns contactId or null ───────────
+async function searchContactByEmail(email) {
+  const { locationId } = getConfig()
+  const data = await ghlFetch('POST', `/contacts/search`, {
+    locationId,
+    page: 1,
+    pageLimit: 1,
+    filters: [{ field: 'email', operator: 'eq', value: email }],
+  }, 'Search by email')
+  return data?.contacts?.[0] || null
+}
+
+// ── STEP 2: Upsert contact (create or update by email) ────────────────────
+async function upsertContact(applicant) {
   const { locationId, fieldLastDate, fieldTotalApps } = getConfig()
+  const payload = {
+    locationId,
+    firstName: applicant.firstname || '',
+    lastName:  applicant.lastname  || '',
+    email:     applicant.email     || '',
+    phone:     applicant.phone     || '',
+    customFields: [
+      { id: fieldLastDate,  value: applicant.last_appointment_date || '' },
+      { id: fieldTotalApps, value: String(applicant.applied_count || 0)  },
+    ],
+  }
+  const data = await ghlFetch('POST', `/contacts/upsert`, payload, 'Upsert contact')
+  // v3 upsert returns { contact: { id, ... }, traceId, ... }
+  return data?.contact?.id || data?.id || null
+}
+
+// ── STEP 3: Add note ───────────────────────────────────────────────────────
+async function addNote(contactId, applicant) {
+  const body = buildNoteBody(applicant)
+  await ghlFetch('POST', `/contacts/${contactId}/notes/`, { body, userId: '' }, 'Add note')
+}
+
+// ── STEP 4: Update tags (v3 uses PUT, merges with existing) ───────────────
+async function updateTags(contactId, existingTags, newTagsStr) {
+  const newTags = newTagsStr.split(' | ').map(t => t.trim()).filter(Boolean)
+  const merged  = [...new Set([...(existingTags || []), ...newTags])]
+  await ghlFetch('PUT', `/contacts/${contactId}/tags/`, { tags: merged }, 'Update tags')
+}
+
+// ── Test push — single contact, full step log ─────────────────────────────
+export async function testPushSingle(applicant) {
+  const { fieldLastDate, fieldTotalApps } = getConfig()
   const log = []
 
-  // Step 1: Lookup
+  // Step 1: Search
   let existing = null
   try {
-    const res = await ghlFetch('GET', `/contacts/?locationId=${locationId}&email=${encodeURIComponent(applicant.email)}`, null, 'Lookup')
-    existing = res?.contacts?.[0] || null
-    log.push({ step: 'Lookup', ok: true, detail: existing ? `Found: ID ${existing.id}` : 'Not found — will create' })
+    existing = await searchContactByEmail(applicant.email)
+    log.push({ step: 'Search by email', ok: true, detail: existing ? `Found — ID: ${existing.id}` : 'Not found — will create via upsert' })
   } catch(e) {
-    log.push({ step: 'Lookup', ok: false, detail: e.message })
+    log.push({ step: 'Search by email', ok: false, detail: e.message })
     return { ok: false, log }
   }
 
-  // Step 2: Build payload and log it
-  const payload = buildPayload(applicant, locationId, fieldLastDate, fieldTotalApps)
-  log.push({ step: 'Payload', ok: true, detail: JSON.stringify(payload, null, 2) })
+  // Show payload
+  const { locationId } = getConfig()
+  log.push({
+    step: 'Upsert payload',
+    ok: true,
+    detail: JSON.stringify({
+      locationId,
+      firstName: applicant.firstname,
+      lastName:  applicant.lastname,
+      email:     applicant.email,
+      phone:     applicant.phone,
+      customFields: [
+        { id: fieldLastDate,  value: applicant.last_appointment_date || '' },
+        { id: fieldTotalApps, value: String(applicant.applied_count || 0)  },
+      ],
+    }, null, 2)
+  })
 
-  // Step 3: Create or Update
+  // Step 2: Upsert
   let contactId
-  if (existing?.id) {
-    try {
-      const res = await ghlFetch('PUT', `/contacts/${existing.id}`, payload, 'Update contact')
-      contactId = existing.id
-      log.push({ step: 'Update contact', ok: true, detail: `Updated ID: ${contactId}` })
-    } catch(e) {
-      log.push({ step: 'Update contact', ok: false, detail: e.message })
-      return { ok: false, log }
-    }
-  } else {
-    try {
-      const res = await ghlFetch('POST', `/contacts/`, payload, 'Create contact')
-      contactId = res?.contact?.id || res?.id
-      log.push({ step: 'Create contact', ok: true, detail: `Created ID: ${contactId}` })
-    } catch(e) {
-      log.push({ step: 'Create contact', ok: false, detail: e.message })
-      return { ok: false, log }
-    }
+  try {
+    contactId = await upsertContact(applicant)
+    if (!contactId) throw new Error('No contactId in response')
+    log.push({ step: 'Upsert contact', ok: true, detail: `Contact ID: ${contactId}` })
+  } catch(e) {
+    log.push({ step: 'Upsert contact', ok: false, detail: e.message })
+    return { ok: false, log }
   }
 
-  // Step 4: Note
+  // Step 3: Note
   try {
-    await ghlFetch('POST', `/contacts/${contactId}/notes/`, { body: buildNoteBody(applicant), userId: '' }, 'Add note')
+    await addNote(contactId, applicant)
     log.push({ step: 'Add note', ok: true, detail: 'Note added' })
   } catch(e) {
     log.push({ step: 'Add note', ok: false, detail: e.message + ' (non-fatal)' })
   }
 
-  // Step 5: Tags
+  // Step 4: Tags
   if (applicant.tags) {
     try {
-      const newTags = applicant.tags.split(' | ').map(t => t.trim()).filter(Boolean)
-      const merged  = [...new Set([...(existing?.tags || []), ...newTags])]
-      await ghlFetch('POST', `/contacts/${contactId}/tags/`, { tags: merged }, 'Update tags')
-      log.push({ step: 'Tags', ok: true, detail: `Tags: ${merged.join(', ')}` })
+      await updateTags(contactId, existing?.tags || [], applicant.tags)
+      log.push({ step: 'Update tags', ok: true, detail: `Tags: ${applicant.tags}` })
     } catch(e) {
-      log.push({ step: 'Tags', ok: false, detail: e.message + ' (non-fatal)' })
+      log.push({ step: 'Update tags', ok: false, detail: e.message + ' (non-fatal)' })
     }
   }
 
   return { ok: true, contactId, log }
 }
 
-// ── Batch push ────────────────────────────────────────────────────────────
+// ── Batch push ─────────────────────────────────────────────────────────────
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 export async function batchPushToGHL(applicants, onProgress) {
@@ -181,70 +221,40 @@ export async function batchPushToGHL(applicants, onProgress) {
 }
 
 export async function pushSingleToGHL(applicant) {
-  const { locationId, fieldLastDate, fieldTotalApps } = getConfig()
   const log = []
   try {
-    // Lookup
+    // 1. Search
     let existing = null
     try {
-      const res = await ghlFetch('GET', `/contacts/?locationId=${locationId}&email=${encodeURIComponent(applicant.email)}`, null, 'Lookup')
-      existing = res?.contacts?.[0] || null
-      log.push(`Lookup: ${existing ? 'found ' + existing.id : 'not found'}`)
-    } catch(e) { throw new Error(`Lookup failed: ${e.message}`) }
+      existing = await searchContactByEmail(applicant.email)
+      log.push(`Search: ${existing ? 'found ' + existing.id : 'not found'}`)
+    } catch(e) { throw new Error(`Search failed: ${e.message}`) }
 
-    // Create or update
-    const payload = buildPayload(applicant, locationId, fieldLastDate, fieldTotalApps)
+    // 2. Upsert
     let contactId
-    if (existing?.id) {
-      try {
-        await ghlFetch('PUT', `/contacts/${existing.id}`, payload, 'Update')
-        contactId = existing.id
-        log.push(`Updated: ${contactId}`)
-      } catch(e) { throw new Error(`Update failed: ${e.message}`) }
-    } else {
-      try {
-        const res = await ghlFetch('POST', `/contacts/`, payload, 'Create')
-        contactId = res?.contact?.id || res?.id
-        log.push(`Created: ${contactId}`)
-      } catch(e) { throw new Error(`Create failed: ${e.message}`) }
-    }
-
-    if (!contactId) throw new Error('No contact ID returned')
-
-    // Note (non-fatal)
     try {
-      await ghlFetch('POST', `/contacts/${contactId}/notes/`, { body: buildNoteBody(applicant), userId: '' }, 'Note')
-      log.push('Note added')
-    } catch(e) { log.push(`Note skipped: ${e.message}`) }
+      contactId = await upsertContact(applicant)
+      if (!contactId) throw new Error('No contactId returned')
+      log.push(`Upsert: ${contactId}`)
+    } catch(e) { throw new Error(`Upsert failed: ${e.message}`) }
 
-    // Tags (non-fatal)
+    // 3. Note (non-fatal)
+    try {
+      await addNote(contactId, applicant)
+      log.push('Note: added')
+    } catch(e) { log.push(`Note: skipped — ${e.message}`) }
+
+    // 4. Tags (non-fatal)
     if (applicant.tags) {
       try {
-        const newTags = applicant.tags.split(' | ').map(t => t.trim()).filter(Boolean)
-        const merged  = [...new Set([...(existing?.tags || []), ...newTags])]
-        await ghlFetch('POST', `/contacts/${contactId}/tags/`, { tags: merged }, 'Tags')
-        log.push(`Tags: ${merged.join(', ')}`)
-      } catch(e) { log.push(`Tags skipped: ${e.message}`) }
+        await updateTags(contactId, existing?.tags || [], applicant.tags)
+        log.push(`Tags: ${applicant.tags}`)
+      } catch(e) { log.push(`Tags: skipped — ${e.message}`) }
     }
 
     return { email: applicant.email, contactId, success: true, log }
   } catch(e) {
     return { email: applicant.email, success: false, error: e.message, log }
-  }
-}
-
-// ── Payload ───────────────────────────────────────────────────────────────
-function buildPayload(applicant, locationId, fieldLastDate, fieldTotalApps) {
-  return {
-    locationId,
-    firstName: applicant.firstname || '',
-    lastName:  applicant.lastname  || '',
-    email:     applicant.email     || '',
-    phone:     applicant.phone     || '',
-    customFields: [
-      { id: fieldLastDate,  value: applicant.last_appointment_date || '' },
-      { id: fieldTotalApps, value: String(applicant.applied_count || 0) },
-    ],
   }
 }
 
