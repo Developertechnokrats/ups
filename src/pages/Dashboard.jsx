@@ -240,9 +240,9 @@ export default function Dashboard() {
           </div>
 
           <div className={styles.dateRange}>
-            <label className={styles.dateLabel}>From</label>
+            <label className={styles.dateLabel}>Start date from</label>
             <input type="date" className={styles.dateInput} value={fromDate} onChange={e => setFromDate(e.target.value)} />
-            <label className={styles.dateLabel}>To</label>
+            <label className={styles.dateLabel}>to</label>
             <input type="date" className={styles.dateInput} value={toDate} onChange={e => setToDate(e.target.value)} />
             {(fromDate || toDate) && (
               <button className={styles.clearDate} onClick={() => { setFromDate(''); setToDate('') }}>Clear</button>

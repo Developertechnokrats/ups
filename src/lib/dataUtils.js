@@ -54,7 +54,13 @@ export function processRawRows(rows) {
     const appId   = String(first['Applicant Id'] || first['applicant_id'] || '').trim() || null
     const dates   = apps.map(a => parseDate(a['Date'] || a['application_date'] || '')).filter(Boolean)
     const lastDate= dates.length ? new Date(Math.max(...dates.map(d => d.getTime()))) : null
-    const startD  = parseDate(first['Start Date'] || first['start_date'] || '')
+    // Use the EARLIEST start date across all rows for this applicant
+    const allStartDates = apps
+      .map(a => parseDate(a['Start Date'] || a['start_date'] || ''))
+      .filter(Boolean)
+    const startD = allStartDates.length
+      ? new Date(Math.min(...allStartDates.map(d => d.getTime())))
+      : null
 
     applicantRows.push({
       applicant_id:          appId,

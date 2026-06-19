@@ -87,8 +87,8 @@ export async function fetchDuplicates({ fromDate, toDate } = {}) {
     .order('applied_count', { ascending: false })
     .order('last_appointment_date', { ascending: false })
 
-  if (fromDate) query = query.gte('last_appointment_date', fromDate)
-  if (toDate)   query = query.lte('last_appointment_date', toDate)
+  if (fromDate) query = query.gte('start_date', fromDate)
+  if (toDate)   query = query.lte('start_date', toDate + 'T23:59:59')
 
   const { data, error } = await query
   if (error) throw error
@@ -122,8 +122,8 @@ export async function fetchAllApplicants({ fromDate, toDate } = {}) {
     .order('applied_count', { ascending: false })
     .order('last_appointment_date', { ascending: false })
 
-  if (fromDate) query = query.gte('last_appointment_date', fromDate)
-  if (toDate)   query = query.lte('last_appointment_date', toDate)
+  if (fromDate) query = query.gte('start_date', fromDate)
+  if (toDate)   query = query.lte('start_date', toDate + 'T23:59:59')
 
   const { data, error } = await query
   if (error) throw error
