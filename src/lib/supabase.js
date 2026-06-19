@@ -178,3 +178,17 @@ export async function fetchAllForExport({ fromDate, toDate, duplicatesOnly = fal
   }
   return allApplicants.map(a => ({ ...a, applications: appMap[a.email] || [] }))
 }
+
+// ── Update GHL sync status for applicants ─────────────────────────────────
+export async function updateGHLStatus(results) {
+  if (!supabase || !results.length) return
+  for (const r of results) {
+    await supabase.from('applicants')
+      .update({
+        ghl_contact_id: r.contactId || null,
+        ghl_status:     r.success ? 'synced' : 'error',
+        ghl_synced_at:  new Date().toISOString(),
+      })
+      .eq('email', r.email)
+  }
+}

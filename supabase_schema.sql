@@ -97,3 +97,15 @@ select
   max(last_appointment_date) as latest_last_date,
   sum(case when extract(year from last_appointment_date) > 2100 then 1 else 0 end) as still_corrupt
 from applicants;
+
+-- ============================================================
+-- GHL Integration — add to applicants table
+-- Run these in Supabase SQL Editor
+-- ============================================================
+
+alter table applicants
+  add column if not exists ghl_contact_id text,
+  add column if not exists ghl_synced_at  timestamptz,
+  add column if not exists ghl_status     text;   -- 'synced' | 'error' | null
+
+create index if not exists idx_applicants_ghl_id on applicants(ghl_contact_id);

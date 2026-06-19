@@ -92,3 +92,34 @@
   .badges { display: none; }
   .sub    { display: none; }
 }
+
+.nameRow { display: flex; align-items: center; gap: 8px; }
+
+.ghlBadge {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 10px; font-weight: 600;
+  background: var(--green-bg); color: var(--green-text);
+  padding: 2px 7px; border-radius: 20px;
+  white-space: nowrap;
+}
+
+.cardActions { display: flex; gap: 6px; flex-shrink: 0; }
+
+.pushBtn {
+  display: flex; align-items: center; gap: 5px;
+  background: var(--amber-bg);
+  border: 0.5px solid var(--amber);
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  font-size: 12px; font-weight: 500;
+  color: var(--amber-text);
+  cursor: pointer; white-space: nowrap;
+  transition: background 0.1s;
+}
+.pushBtn:hover { background: var(--amber); color: white; border-color: var(--amber); }
+.pushBtnSynced {
+  background: var(--green-bg);
+  border-color: var(--green);
+  color: var(--green-text);
+}
+.pushBtnSynced:hover { background: var(--green); color: white; }

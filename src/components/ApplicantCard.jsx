@@ -1,4 +1,4 @@
-import { ExternalLink, Briefcase, Calendar, Mail, Phone } from 'lucide-react'
+import { ExternalLink, Briefcase, Calendar, Mail, Phone, Zap, CheckCircle } from 'lucide-react'
 import { safeDisplayDate } from '../lib/dataUtils'
 import styles from './ApplicantCard.module.css'
 
@@ -28,28 +28,31 @@ function formatDisplayDate(dateStr) {
   } catch { return '' }
 }
 
-export default function ApplicantCard({ applicant, index, onViewDetails }) {
+export default function ApplicantCard({ applicant, index, onViewDetails, onPushGHL }) {
   const [bg, fg] = AVATAR_COLORS[index % AVATAR_COLORS.length]
   const tags = applicant.tags || ''
+  const isSynced = applicant.ghl_status === 'synced'
 
   return (
     <div className={styles.card}>
       <div className={styles.header}>
-        {/* Avatar */}
         <div className={styles.avatar} style={{ background: bg, color: fg }}>
           {initials(applicant.firstname, applicant.lastname)}
         </div>
 
-        {/* Info */}
         <div className={styles.info}>
-          <div className={styles.name}>{applicant.firstname} {applicant.lastname}</div>
+          <div className={styles.nameRow}>
+            <span className={styles.name}>{applicant.firstname} {applicant.lastname}</span>
+            {isSynced && (
+              <span className={styles.ghlBadge}><CheckCircle size={10}/> GHL Synced</span>
+            )}
+          </div>
           <div className={styles.sub}>
             <span className={styles.meta}><Mail size={11}/> {applicant.email}</span>
             {applicant.phone && <span className={styles.meta}><Phone size={11}/> {applicant.phone}</span>}
           </div>
         </div>
 
-        {/* Badges */}
         <div className={styles.badges}>
           {tags && tags.split(' | ').map(tag => {
             const c = CAT_COLORS[tag] || CAT_COLORS.Unarmed
@@ -69,10 +72,20 @@ export default function ApplicantCard({ applicant, index, onViewDetails }) {
           )}
         </div>
 
-        {/* View button */}
-        <button className={styles.viewBtn} onClick={() => onViewDetails(applicant, index)}>
-          <ExternalLink size={13}/> View
-        </button>
+        <div className={styles.cardActions}>
+          {onPushGHL && (
+            <button
+              className={`${styles.pushBtn} ${isSynced ? styles.pushBtnSynced : ''}`}
+              onClick={() => onPushGHL(applicant)}
+              title="Push to GoHighLevel"
+            >
+              <Zap size={13}/> {isSynced ? 'Re-sync' : 'Push'}
+            </button>
+          )}
+          <button className={styles.viewBtn} onClick={() => onViewDetails(applicant, index)}>
+            <ExternalLink size={13}/> View
+          </button>
+        </div>
       </div>
     </div>
   )

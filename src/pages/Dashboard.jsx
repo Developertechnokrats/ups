@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight, Zap } from 'lucide-react'
 import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, hasSupabase, PAGE_SIZE } from '../lib/supabase'
+export const hasGHL = !!import.meta.env.VITE_GHL_TOKEN
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
 import ApplicantCard from '../components/ApplicantCard'
 import UploadZone from '../components/UploadZone'
 import DbVerify from '../components/DbVerify'
 import ApplicantModal from '../components/ApplicantModal'
+import GHLPushModal from '../components/GHLPushModal'
 import styles from './Dashboard.module.css'
 
 const TAG_FILTERS = ['Any type', 'Armed', 'Unarmed', 'Admin', 'Supervisor']
@@ -33,6 +35,7 @@ export default function Dashboard() {
   const [dbMode, setDbMode]             = useState(false)
   const [selectedApplicant, setSelectedApplicant] = useState(null)
   const [selectedIndex, setSelectedIndex]         = useState(0)
+  const [ghlPushList, setGhlPushList]             = useState(null)  // null | applicant[]
   const [exporting, setExporting]       = useState(false)
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
@@ -257,6 +260,28 @@ export default function Dashboard() {
                 : <><Download size={14}/> Export CSV ({totalCount.toLocaleString()})</>
               }
             </button>
+            {import.meta.env.VITE_GHL_TOKEN && (
+              <button className={styles.btnGHL} onClick={async () => {
+                // Fetch all matching for GHL push
+                setExporting(true)
+                try {
+                  const { fetchAllForExport: fetchAll } = await import('../lib/supabase')
+                  const { enrichForDisplay: enrich } = await import('../lib/dataUtils')
+                  const raw = hasSupabase ? await fetchAllForExport({
+                    fromDate: fromDate || undefined,
+                    toDate: toDate || undefined,
+                    duplicatesOnly: viewMode === 'duplicates',
+                    search: activeSearch,
+                  }) : displayed
+                  const rows = hasSupabase ? enrich(raw) : raw
+                  const toSend = tagFilter === 'Any type' ? rows : rows.filter(a => (a.tags||'').includes(tagFilter))
+                  setGhlPushList(toSend)
+                } catch(e) { setError('GHL prep failed: ' + e.message) }
+                setExporting(false)
+              }} disabled={!totalCount || exporting}>
+                <Zap size={14}/> Push to GHL ({totalCount.toLocaleString()})
+              </button>
+            )}
           </div>
         </div>
 
@@ -351,6 +376,7 @@ export default function Dashboard() {
                 applicant={a}
                 index={i}
                 onViewDetails={(applicant, idx) => { setSelectedApplicant(applicant); setSelectedIndex(idx) }}
+                onPushGHL={import.meta.env.VITE_GHL_TOKEN ? (a) => setGhlPushList([a]) : null}
               />
             ))}
 
@@ -397,6 +423,17 @@ export default function Dashboard() {
 
       {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)}/>}
       {showVerify && <DbVerify onClose={() => setShowVerify(false)}/>}
+      {ghlPushList && (
+        <GHLPushModal
+          applicants={ghlPushList}
+          onClose={() => setGhlPushList(null)}
+          onComplete={(results) => {
+            // Refresh to show updated ghl_status
+            setGhlPushList(null)
+            loadPage(currentPage)
+          }}
+        />
+      )}
       {selectedApplicant && (
         <ApplicantModal
           applicant={selectedApplicant}
