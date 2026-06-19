@@ -6,6 +6,7 @@ import StatsBar from '../components/StatsBar'
 import ApplicantCard from '../components/ApplicantCard'
 import UploadZone from '../components/UploadZone'
 import DbVerify from '../components/DbVerify'
+import ApplicantModal from '../components/ApplicantModal'
 import styles from './Dashboard.module.css'
 
 const TAG_FILTERS = ['Any type', 'Armed', 'Unarmed', 'Admin', 'Supervisor']
@@ -30,6 +31,8 @@ export default function Dashboard() {
   const [toDate, setToDate]             = useState('')
   const [viewMode, setViewMode]         = useState('all')
   const [dbMode, setDbMode]             = useState(false)
+  const [selectedApplicant, setSelectedApplicant] = useState(null)
+  const [selectedIndex, setSelectedIndex]         = useState(0)
   const [exporting, setExporting]       = useState(false)
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)

@@ -2,7 +2,6 @@
   background: var(--surface);
   border: 0.5px solid var(--border);
   border-radius: var(--radius-lg);
-  overflow: hidden;
   transition: box-shadow 0.15s;
 }
 .card:hover { box-shadow: var(--shadow-sm); }
@@ -12,8 +11,6 @@
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
-  cursor: pointer;
-  user-select: none;
 }
 
 .avatar {
@@ -42,7 +39,7 @@
 .sub {
   display: flex;
   gap: 12px;
-  margin-top: 2px;
+  margin-top: 3px;
   flex-wrap: wrap;
 }
 
@@ -57,8 +54,9 @@
 .badges {
   display: flex;
   gap: 6px;
-  flex-shrink: 0;
   align-items: center;
+  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .badge {
@@ -72,72 +70,25 @@
   white-space: nowrap;
 }
 
-.chevron {
-  color: var(--text-faint);
-  flex-shrink: 0;
-  transition: transform 0.2s;
-}
-.chevron.open { transform: rotate(180deg); }
-
-.body {
-  border-top: 0.5px solid var(--border);
-  padding: 4px 16px 12px;
-}
-
-.jobRow {
+.viewBtn {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 9px 0;
-  border-bottom: 0.5px solid var(--border);
-}
-.jobRow:last-child { border-bottom: none; }
-
-.catBadge {
-  font-size: 10px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 20px;
-  flex-shrink: 0;
-  margin-top: 2px;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.jobTitle {
-  font-size: 13px;
-  color: var(--text);
-  flex: 1;
-  line-height: 1.5;
-}
-
-.jobDate {
+  align-items: center;
+  gap: 5px;
+  background: var(--surface2);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
   font-size: 12px;
-  color: var(--text-muted);
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
   flex-shrink: 0;
   white-space: nowrap;
-  padding-top: 1px;
+  transition: background 0.1s;
 }
+.viewBtn:hover { background: var(--text); color: var(--surface); border-color: var(--text); }
 
 @media (max-width: 600px) {
   .badges { display: none; }
-  .sub { display: none; }
+  .sub    { display: none; }
 }
-
-.loadingJobs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 0;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-.jobError {
-  padding: 10px 0;
-  font-size: 13px;
-  color: var(--red-text);
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
-.spin { animation: spin 0.7s linear infinite; }
