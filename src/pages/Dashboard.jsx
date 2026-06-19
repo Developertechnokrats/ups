@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Upload, Download, RefreshCw, Search, SlidersHorizontal, Database, Users, Copy } from 'lucide-react'
-import { fetchDuplicates, fetchAllApplicants, fetchStats, upsertAllData, hasSupabase } from '../lib/supabase'
+import { Upload, Download, RefreshCw, Search, SlidersHorizontal, Database, Users, Copy, Trash2 } from 'lucide-react'
+import { fetchDuplicates, fetchAllApplicants, fetchStats, upsertAllData, clearAllData, hasSupabase } from '../lib/supabase'
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
 import ApplicantCard from '../components/ApplicantCard'
@@ -24,6 +24,8 @@ export default function Dashboard() {
   const [toDate, setToDate]             = useState('')
   const [viewMode, setViewMode]         = useState('all')   // 'all' | 'duplicates'
   const [dbMode, setDbMode]             = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [clearing, setClearing]         = useState(false)
 
   async function loadFromDB(mode = viewMode) {
     setLoading(true)
@@ -92,6 +94,21 @@ export default function Dashboard() {
       totalApplications: applicationRows.length,
       duplicates:        applicantRows.filter(a => a.applied_count > 1).length,
     })
+  }
+
+  async function handleClear() {
+    setClearing(true)
+    setError('')
+    try {
+      await clearAllData()
+      setApplicants([])
+      setDbStats({})
+      setDbMode(false)
+      setConfirmClear(false)
+    } catch (e) {
+      setError('Clear failed: ' + e.message)
+    }
+    setClearing(false)
   }
 
   const saveMsg = saveProgress
@@ -201,6 +218,20 @@ export default function Dashboard() {
               <button className={styles.btnSecondary} onClick={() => loadFromDB(viewMode)} disabled={loading || !!saveProgress}>
                 <RefreshCw size={14} className={loading ? styles.spin : ''} /> Refresh
               </button>
+            )}
+            {hasSupabase && !confirmClear && (
+              <button className={styles.btnDanger} onClick={() => setConfirmClear(true)} disabled={!!saveProgress || clearing}>
+                <Trash2 size={14} /> Clear DB
+              </button>
+            )}
+            {hasSupabase && confirmClear && (
+              <div className={styles.confirmRow}>
+                <span className={styles.confirmText}>Delete all data?</span>
+                <button className={styles.btnDangerSolid} onClick={handleClear} disabled={clearing}>
+                  {clearing ? 'Clearing…' : 'Yes, clear all'}
+                </button>
+                <button className={styles.btnSecondary} onClick={() => setConfirmClear(false)}>Cancel</button>
+              </div>
             )}
             <button
               className={styles.btnPrimary}

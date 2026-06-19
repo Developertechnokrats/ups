@@ -129,3 +129,13 @@ export async function fetchAllApplicants({ fromDate, toDate } = {}) {
   if (error) throw error
   return data || []
 }
+
+// ── Wipe all data from both tables ────────────────────────────────────────
+export async function clearAllData() {
+  if (!supabase) throw new Error('Supabase not configured')
+  // Delete applications first (foreign key constraint)
+  const { error: e1 } = await supabase.from('applications').delete().gte('id', 0)
+  if (e1) throw new Error('Failed to clear applications: ' + e1.message)
+  const { error: e2 } = await supabase.from('applicants').delete().gte('id', 0)
+  if (e2) throw new Error('Failed to clear applicants: ' + e2.message)
+}
