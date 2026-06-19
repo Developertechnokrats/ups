@@ -199,7 +199,24 @@
   margin-bottom: 16px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.savePBar {
+  flex: 1;
+  min-width: 100px;
+  height: 5px;
+  background: rgba(24,95,165,0.15);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.savePFill {
+  height: 100%;
+  background: var(--blue);
+  border-radius: 3px;
+  transition: width 0.25s ease;
 }
 
 /* ── Toolbar ── */

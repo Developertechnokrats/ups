@@ -3,7 +3,6 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-// Only create client if real credentials exist
 const isConfigured =
   supabaseUrl &&
   supabaseKey &&
@@ -13,6 +12,63 @@ const isConfigured =
 export const supabase = isConfigured ? createClient(supabaseUrl, supabaseKey) : null
 export const hasSupabase = isConfigured
 
+// ── Helpers ───────────────────────────────────────────────────────────────
+// Upsert in safe batches, return count saved
+async function batchUpsert(table, rows, batchSize = 200, onConflict = null) {
+  let saved = 0
+  for (let i = 0; i < rows.length; i += batchSize) {
+    const batch = rows.slice(i, i + batchSize)
+    const q = onConflict
+      ? supabase.from(table).upsert(batch, { onConflict })
+      : supabase.from(table).insert(batch)
+    const { error } = await q
+    if (error) throw new Error(`${table} batch ${Math.floor(i/batchSize)+1}: ${error.message}`)
+    saved += batch.length
+  }
+  return saved
+}
+
+// ── Write ─────────────────────────────────────────────────────────────────
+export async function upsertAllData(applicantRows, applicationRows, onProgress) {
+  if (!supabase) throw new Error('Supabase not configured')
+
+  const total = applicantRows.length + applicationRows.length
+  let done = 0
+
+  // Step 1: upsert applicants in batches of 200
+  onProgress?.({ stage: 'applicants', done: 0, total: applicantRows.length })
+  for (let i = 0; i < applicantRows.length; i += 200) {
+    const batch = applicantRows.slice(i, i + 200)
+    const { error } = await supabase
+      .from('applicants')
+      .upsert(batch, { onConflict: 'email' })
+    if (error) throw new Error('Applicants save failed: ' + error.message)
+    done += batch.length
+    onProgress?.({ stage: 'applicants', done, total })
+  }
+
+  // Step 2: delete old applications for these emails (clean slate)
+  // Do in chunks to avoid URL length limits
+  const emails = applicantRows.map(a => a.email)
+  for (let i = 0; i < emails.length; i += 100) {
+    const chunk = emails.slice(i, i + 100)
+    const { error } = await supabase.from('applications').delete().in('email', chunk)
+    if (error) throw new Error('Cleanup failed: ' + error.message)
+  }
+
+  // Step 3: insert applications in batches of 200
+  onProgress?.({ stage: 'applications', done: 0, total: applicationRows.length })
+  let appDone = 0
+  for (let i = 0; i < applicationRows.length; i += 200) {
+    const batch = applicationRows.slice(i, i + 200)
+    const { error } = await supabase.from('applications').insert(batch)
+    if (error) throw new Error('Applications save failed: ' + error.message)
+    appDone += batch.length
+    onProgress?.({ stage: 'applications', done: appDone, total: applicationRows.length })
+  }
+}
+
+// ── Read ──────────────────────────────────────────────────────────────────
 export async function fetchDuplicates({ fromDate, toDate } = {}) {
   if (!supabase) throw new Error('Supabase not configured')
   let query = supabase
@@ -45,23 +101,5 @@ export async function fetchStats() {
     totalApplicants:   r1.count ?? 0,
     totalApplications: r2.count ?? 0,
     duplicates:        r3.count ?? 0,
-  }
-}
-
-export async function upsertAllData(applicantRows, applicationRows) {
-  if (!supabase) throw new Error('Supabase not configured')
-
-  const { error: e1 } = await supabase
-    .from('applicants')
-    .upsert(applicantRows, { onConflict: 'email' })
-  if (e1) throw e1
-
-  const emails = applicantRows.map(a => a.email)
-  const { error: e2 } = await supabase.from('applications').delete().in('email', emails)
-  if (e2) throw e2
-
-  for (let i = 0; i < applicationRows.length; i += 50) {
-    const { error: e3 } = await supabase.from('applications').insert(applicationRows.slice(i, i + 50))
-    if (e3) throw e3
   }
 }

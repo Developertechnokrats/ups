@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Upload, Download, RefreshCw, Search, SlidersHorizontal, Database } from 'lucide-react'
 import { fetchDuplicates, fetchStats, upsertAllData, hasSupabase } from '../lib/supabase'
-import { parseCSV, parseExcel, enrichForDisplay, exportToCSV } from '../lib/dataUtils'
+import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
 import ApplicantCard from '../components/ApplicantCard'
 import UploadZone from '../components/UploadZone'
@@ -13,7 +13,7 @@ export default function Dashboard() {
   const [applicants, setApplicants] = useState([])
   const [dbStats, setDbStats]       = useState({})
   const [loading, setLoading]       = useState(false)
-  const [uploadMsg, setUploadMsg]   = useState('')
+  const [saveProgress, setSaveProgress] = useState(null)  // null | { stage, done, total }
   const [showUpload, setShowUpload] = useState(false)
   const [error, setError]           = useState('')
   const [search, setSearch]         = useState('')
@@ -34,14 +34,12 @@ export default function Dashboard() {
       setDbStats(stats)
       setDbMode(true)
     } catch (e) {
-      setError('Supabase error: ' + e.message)
+      setError('Supabase fetch error: ' + e.message)
     }
     setLoading(false)
   }
 
-  useEffect(() => {
-    if (hasSupabase) loadFromDB()
-  }, [fromDate, toDate])
+  useEffect(() => { if (hasSupabase) loadFromDB() }, [fromDate, toDate])
 
   async function handleUploadData(parsed) {
     const { applicantRows, applicationRows } = parsed
@@ -49,15 +47,21 @@ export default function Dashboard() {
     setError('')
 
     if (hasSupabase) {
-      setUploadMsg(`Saving ${applicantRows.length} applicants + ${applicationRows.length} applications to Supabase…`)
+      setSaveProgress({ stage: 'applicants', done: 0, total: applicantRows.length + applicationRows.length })
       try {
-        await upsertAllData(applicantRows, applicationRows)
-        setUploadMsg('Saved! Refreshing…')
+        await upsertAllData(applicantRows, applicationRows, (prog) => {
+          setSaveProgress({
+            stage: prog.stage,
+            done:  prog.done,
+            total: prog.stage === 'applicants' ? applicantRows.length : applicationRows.length,
+          })
+        })
+        setSaveProgress({ stage: 'done', done: 0, total: 0 })
         await loadFromDB()
-        setUploadMsg('')
+        setSaveProgress(null)
       } catch (e) {
-        setError('Supabase save failed: ' + e.message + '. Showing data locally.')
-        setUploadMsg('')
+        setSaveProgress(null)
+        setError('Save failed: ' + e.message + ' — showing data locally.')
         showLocal(applicantRows, applicationRows)
       }
     } else {
@@ -82,6 +86,15 @@ export default function Dashboard() {
     })
   }
 
+  // Save progress banner message
+  const saveMsg = saveProgress
+    ? saveProgress.stage === 'done'
+      ? 'Saved! Refreshing dashboard…'
+      : saveProgress.stage === 'applicants'
+        ? `Saving applicants… ${saveProgress.done} / ${saveProgress.total}`
+        : `Saving applications… ${saveProgress.done} / ${saveProgress.total}`
+    : ''
+
   const displayed = useMemo(() => {
     let list = [...applicants]
     if (search) {
@@ -92,7 +105,7 @@ export default function Dashboard() {
         (a.jobs || []).some(j => (j.title || '').toLowerCase().includes(q))
       )
     }
-    if (filter === '2 jobs')  list = list.filter(a => a.applied_count === 2)
+    if (filter === '2 jobs')       list = list.filter(a => a.applied_count === 2)
     else if (filter === '3 jobs')  list = list.filter(a => a.applied_count === 3)
     else if (filter === '4+ jobs') list = list.filter(a => a.applied_count >= 4)
     return list
@@ -116,11 +129,11 @@ export default function Dashboard() {
         {Object.keys(dbStats).length > 0 && (
           <div className={styles.sidebarStats}>
             <div className={styles.sidebarStat}>
-              <span className={styles.sidebarStatVal}>{dbStats.totalApplicants ?? '—'}</span>
+              <span className={styles.sidebarStatVal}>{(dbStats.totalApplicants ?? '—').toLocaleString?.() ?? dbStats.totalApplicants}</span>
               <span className={styles.sidebarStatLabel}>Total applicants</span>
             </div>
             <div className={styles.sidebarStat}>
-              <span className={styles.sidebarStatVal}>{dbStats.totalApplications ?? '—'}</span>
+              <span className={styles.sidebarStatVal}>{(dbStats.totalApplications ?? '—').toLocaleString?.() ?? dbStats.totalApplications}</span>
               <span className={styles.sidebarStatLabel}>Applications</span>
             </div>
             <div className={styles.sidebarStat}>
@@ -140,35 +153,40 @@ export default function Dashboard() {
 
       {/* ── Main ── */}
       <main className={styles.main}>
-        {/* Topbar */}
         <div className={styles.topbar}>
           <div>
             <h1 className={styles.pageTitle}>Duplicate Applicants</h1>
             <p className={styles.pageSubtitle}>People who applied for more than one position</p>
           </div>
           <div className={styles.actions}>
-            <button className={styles.btnSecondary} onClick={() => setShowUpload(true)}>
+            <button className={styles.btnSecondary} onClick={() => setShowUpload(true)} disabled={!!saveProgress}>
               <Upload size={14} /> Upload file
             </button>
             {hasSupabase && (
-              <button className={styles.btnSecondary} onClick={loadFromDB} disabled={loading}>
+              <button className={styles.btnSecondary} onClick={loadFromDB} disabled={loading || !!saveProgress}>
                 <RefreshCw size={14} className={loading ? styles.spin : ''} /> Refresh
               </button>
             )}
-            <button
-              className={styles.btnPrimary}
-              onClick={() => exportToCSV(displayed)}
-              disabled={!displayed.length}
-            >
+            <button className={styles.btnPrimary} onClick={() => exportToCSV(displayed)} disabled={!displayed.length}>
               <Download size={14} /> Export CSV
             </button>
           </div>
         </div>
 
-        {error     && <div className={styles.bannerError}>{error}</div>}
-        {uploadMsg && (
+        {error && <div className={styles.bannerError}>{error}</div>}
+
+        {saveProgress && (
           <div className={styles.bannerInfo}>
-            <RefreshCw size={13} className={styles.spin} /> {uploadMsg}
+            <RefreshCw size={13} className={styles.spin} />
+            <span>{saveMsg}</span>
+            {saveProgress.total > 0 && (
+              <div className={styles.savePBar}>
+                <div
+                  className={styles.savePFill}
+                  style={{ width: `${Math.round((saveProgress.done / saveProgress.total) * 100)}%` }}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -198,11 +216,7 @@ export default function Dashboard() {
 
           <div className={styles.filterBtns}>
             {FILTER_OPTIONS.map(f => (
-              <button
-                key={f}
-                className={`${styles.filterBtn} ${filter === f ? styles.filterActive : ''}`}
-                onClick={() => setFilter(f)}
-              >
+              <button key={f} className={`${styles.filterBtn} ${filter === f ? styles.filterActive : ''}`} onClick={() => setFilter(f)}>
                 {f}
               </button>
             ))}
@@ -212,21 +226,16 @@ export default function Dashboard() {
         {/* Content */}
         {loading && (
           <div className={styles.empty}>
-            <RefreshCw size={28} className={styles.spin} color="var(--text-faint)" />
+            <div className={styles.emptyIcon}><RefreshCw size={22} className={styles.spin} /></div>
             <p className={styles.emptyHint}>Loading from Supabase…</p>
           </div>
         )}
 
-        {!loading && !displayed.length && (
+        {!loading && !displayed.length && !saveProgress && (
           <div className={styles.empty}>
-            <div className={styles.emptyIcon}>
-              <Upload size={28} strokeWidth={1.5} />
-            </div>
+            <div className={styles.emptyIcon}><Upload size={24} strokeWidth={1.5} /></div>
             <p className={styles.emptyTitle}>No data yet</p>
-            <p className={styles.emptyHint}>
-              Upload a CSV or Excel file to get started.<br />
-              All rows will be saved to Supabase automatically.
-            </p>
+            <p className={styles.emptyHint}>Upload a CSV or Excel file to get started.<br />All rows are saved to Supabase and persist across sessions.</p>
             <button className={styles.btnPrimary} onClick={() => setShowUpload(true)}>
               <Upload size={14} /> Upload file
             </button>
@@ -237,7 +246,7 @@ export default function Dashboard() {
           <div className={styles.cards}>
             <div className={styles.resultsRow}>
               <span className={styles.resultCount}>
-                {displayed.length} applicant{displayed.length !== 1 ? 's' : ''}
+                {displayed.length.toLocaleString()} applicant{displayed.length !== 1 ? 's' : ''}
                 {search ? ` matching "${search}"` : ''}
               </span>
             </div>
@@ -248,9 +257,7 @@ export default function Dashboard() {
         )}
       </main>
 
-      {showUpload && (
-        <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)} />
-      )}
+      {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)} />}
     </div>
   )
 }
