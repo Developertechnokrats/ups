@@ -4,7 +4,7 @@ import { parse, isValid, format } from 'date-fns'
 
 // ── Job classification ────────────────────────────────────────────────────
 export function classifyJob(title = '') {
-  const t = title.toLowerCase()
+  const t = title.toLowerCase().replace(/un[-\s]armed/g, 'unarmed')
   if (t.includes('supervisor')) return 'Supervisor'
   if (t.includes('admin') || t.includes('director') || t.includes('manager')) return 'Admin'
   if (t.includes('unarmed')) return 'Unarmed'
