@@ -48,7 +48,7 @@ export default function ApplicantCard({ applicant, index }) {
             .from('applications')
             .select('job_title, application_date, status_name, department')
             .eq('email', applicant.email)
-            .order('application_date', { ascending: false, nullsFirst: false })
+            .order('application_date', { ascending: false })
             .range(from, from + PAGE - 1)
           if (error) throw error
           if (!data || data.length === 0) break
@@ -56,7 +56,15 @@ export default function ApplicantCard({ applicant, index }) {
           if (data.length < PAGE) break
           from += PAGE
         }
-        setJobs(allJobs.map(j => ({
+        setJobs(allJobs
+          .sort((a, b) => {
+            // Sort latest application_date first, nulls last
+            if (!a.application_date && !b.application_date) return 0
+            if (!a.application_date) return 1
+            if (!b.application_date) return -1
+            return b.application_date.localeCompare(a.application_date)
+          })
+          .map(j => ({
           title:    j.job_title    || '',
           date:     safeDisplayDate(j.application_date),
           category: classifyJob(j.job_title || ''),
