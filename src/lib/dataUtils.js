@@ -54,7 +54,14 @@ function parseDate(val) {
 const fmtISO     = d => (d && isValid(d)) ? format(d, 'yyyy-MM-dd') : null
 const fmtDisplay = d => (d && isValid(d)) ? format(d, 'dd MMM yyyy') : ''
 
-// Safe display from DB string (yyyy-MM-dd) or any date value
+// Normalize phone to last 10 digits for indexed matching
+export function normalizePhone(phone) {
+  if (!phone) return null
+  const digits = String(phone).replace(/[^0-9]/g, '')
+  return digits.length >= 10 ? digits.slice(-10) : null
+}
+
+
 export function safeDisplayDate(val) {
   if (!val || val === 'null' || val === 'undefined') return ''
   const s = String(val).trim()
