@@ -65,3 +65,53 @@
 }
 .markBtn:hover:not(:disabled) { background: var(--green); color: white; }
 .markBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.countBadge {
+  display: inline-block;
+  background: var(--blue-bg);
+  color: var(--blue-text);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.viewBtn {
+  display: flex; align-items: center; gap: 5px;
+  background: var(--surface2);
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 5px 10px;
+  font-size: 12px; font-weight: 500;
+  color: var(--text);
+  cursor: pointer; white-space: nowrap;
+  transition: background 0.1s;
+}
+.viewBtn:hover { background: var(--text); color: var(--surface); }
+
+/* Modal */
+.modalOverlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 300; padding: 16px;
+}
+.modal {
+  background: var(--surface);
+  border-radius: var(--radius-xl);
+  width: 100%; max-width: 700px;
+  max-height: 80vh; overflow-y: auto;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.18);
+}
+.modalHeader {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 20px 24px 16px;
+  border-bottom: 0.5px solid var(--border);
+  position: sticky; top: 0;
+  background: var(--surface); z-index: 1;
+}
+.modalName  { font-size: 15px; font-weight: 600; }
+.modalEmail { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
+.modalClose { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 4px; border-radius: var(--radius-sm); }
+.modalClose:hover { background: var(--surface2); }
+.modalLoading { display: flex; align-items: center; gap: 8px; padding: 32px; color: var(--text-muted); font-size: 13px; }

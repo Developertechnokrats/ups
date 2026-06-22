@@ -285,7 +285,7 @@ export async function fetchFreshToContact({ fromDate, toDate, page = 0, search =
   const from = page * PAGE_SIZE
   const to   = from + PAGE_SIZE - 1
 
-  // Step 1: get emails from cache (fast, indexed)
+  // Step 1: get distinct emails from cache (fast, indexed)
   const { data: cacheRows, error: cacheErr, count: totalCount } = await supabase
     .from('fresh_to_contact_cache')
     .select('email', { count: 'exact' })
@@ -294,14 +294,15 @@ export async function fetchFreshToContact({ fromDate, toDate, page = 0, search =
   if (cacheErr) throw cacheErr
   if (!cacheRows?.length) return { applicants: [], totalCount: totalCount ?? 0 }
 
-  const emails = cacheRows.map(r => r.email)
+  // Deduplicate emails just in case
+  const emails = [...new Set(cacheRows.map(r => r.email.toLowerCase()))]
 
   // Step 2: get full applicant data for this page's emails
   let q = supabase
     .from('applicants')
     .select('*')
     .in('email', emails)
-    .order('applied_count', { ascending: false })
+    .order('applied_count',         { ascending: false })
     .order('last_appointment_date', { ascending: false })
 
   if (fromDate) q = q.gte('start_date', fromDate)
@@ -313,7 +314,17 @@ export async function fetchFreshToContact({ fromDate, toDate, page = 0, search =
 
   const { data, error } = await q
   if (error) throw error
-  return { applicants: data || [], totalCount: totalCount ?? 0 }
+
+  // Deduplicate by email in case applicants table has dupes
+  const seen = new Set()
+  const deduped = (data || []).filter(a => {
+    const key = a.email.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
+  return { applicants: deduped, totalCount: totalCount ?? 0 }
 }
 
 export async function fetchFreshStats() {
@@ -386,4 +397,83 @@ export async function refreshComputedTables() {
   if (!supabase) return
   const { error } = await supabase.rpc('refresh_computed_tables')
   if (error) throw new Error('Cache refresh failed: ' + error.message)
+}
+
+// ── Orphaned grouped by email (one row per person, with appointment count) ─
+export async function fetchOrphanedGrouped({ page = 0, search = '' } = {}) {
+  if (!supabase) throw new Error('Supabase not configured')
+
+  // Get distinct emails with counts from cache
+  // Supabase doesn't support GROUP BY directly, so fetch all emails then group in JS
+  let q = supabase
+    .from('orphaned_appointments_cache')
+    .select('email, contact_name, phone, appointment_id, requested_time, calendar, outcome')
+    .order('requested_time', { ascending: false })
+
+  if (search?.trim()) {
+    const s = search.trim()
+    q = q.or(`email.ilike.%${s}%,contact_name.ilike.%${s}%,phone.ilike.%${s}%`)
+  }
+
+  const { data, error } = await q
+  if (error) throw error
+
+  // Group by email — keep latest appointment as primary
+  const grouped = {}
+  for (const row of (data || [])) {
+    const key = row.email.toLowerCase()
+    if (!grouped[key]) {
+      grouped[key] = {
+        email:        row.email,
+        contact_name: row.contact_name,
+        phone:        row.phone,
+        latest_time:  row.requested_time,
+        count:        0,
+        appointment_ids: [],
+      }
+    }
+    grouped[key].count++
+    grouped[key].appointment_ids.push(row.appointment_id)
+    // Keep latest date
+    if (row.requested_time > grouped[key].latest_time) {
+      grouped[key].latest_time   = row.requested_time
+      grouped[key].contact_name  = row.contact_name
+    }
+  }
+
+  const all = Object.values(grouped).sort((a, b) => (b.latest_time || '').localeCompare(a.latest_time || ''))
+  const totalCount = all.length
+  const paged = all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+
+  return { contacts: paged, totalCount }
+}
+
+// Fetch all appointments for one email (for the View modal)
+export async function fetchAppointmentsForEmail(email) {
+  if (!supabase) throw new Error('Supabase not configured')
+  const { data, error } = await supabase
+    .from('orphaned_appointments_cache')
+    .select('*')
+    .ilike('email', email)
+    .order('requested_time', { ascending: false })
+  if (error) throw error
+  return data || []
+}
+
+// Mark ALL appointments for an email as contacted
+export async function markAllAsContacted(email, contactName) {
+  if (!supabase) throw new Error('Supabase not configured')
+  const { data, error } = await supabase
+    .from('orphaned_appointments_cache')
+    .select('appointment_id')
+    .ilike('email', email)
+  if (error) throw error
+
+  for (const row of (data || [])) {
+    await supabase.from('contacted_overrides').upsert({
+      appointment_id: row.appointment_id,
+      email,
+      contact_name: contactName,
+    }, { onConflict: 'appointment_id' })
+  }
 }
