@@ -45,7 +45,16 @@ export default function AppointmentUpload({ onClose, onComplete }) {
       })
 
       setProgress({ pct: 100, msg: 'Refreshing Fresh to Contact list…' })
-      await refreshComputedTables()
+      try {
+        await refreshComputedTables()
+      } catch(e) {
+        // Cache refresh timed out — data is saved, just needs manual rebuild
+        setProgress({ pct: 100, msg: `✅ ${rows.length.toLocaleString()} appointments saved. Cache refresh timed out — please click "Rebuild Cache" in the sidebar or run manually in Supabase.` })
+        setDone(true)
+        setSaving(false)
+        onComplete?.(rows.length)
+        return
+      }
 
       setDone(true)
       setProgress({ pct: 100, msg: `✅ ${rows.length.toLocaleString()} appointments saved successfully.` })
