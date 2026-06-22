@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight, Zap } from 'lucide-react'
-import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, buildNotesForApplicants, hasSupabase, PAGE_SIZE } from '../lib/supabase'
+import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight, Zap, Leaf } from 'lucide-react'
+import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, buildNotesForApplicants, fetchFreshStats, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 export const hasGHL = !!import.meta.env.VITE_GHL_TOKEN
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
@@ -10,6 +10,7 @@ import DbVerify from '../components/DbVerify'
 import ApplicantModal from '../components/ApplicantModal'
 import GHLPushModal from '../components/GHLPushModal'
 import GHLDiag from '../components/GHLDiag'
+import FreshToContact from './FreshToContact'
 import styles from './Dashboard.module.css'
 
 const TAG_FILTERS = ['Any type', 'Armed', 'Unarmed', 'Admin', 'Supervisor']
@@ -39,6 +40,7 @@ export default function Dashboard() {
   const [ghlPushList, setGhlPushList]             = useState(null)
   const [showGHLDiag, setShowGHLDiag]           = useState(false)
   const [exporting, setExporting]       = useState(false)
+  const [freshStats, setFreshStats]     = useState({})
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
@@ -243,6 +245,11 @@ export default function Dashboard() {
       {/* ── Main ── */}
       <main className={styles.main}>
 
+        {/* Fresh to Contact — rendered as its own page */}
+        {viewMode === 'fresh' && <FreshToContact />}
+
+        {/* Main applicant views */}
+        {viewMode !== 'fresh' && <>
         <div className={styles.topbar}>
           <div>
             <h1 className={styles.pageTitle}>{viewMode==='all' ? 'All Applicants' : 'Duplicate Applicants'}</h1>
@@ -429,6 +436,7 @@ export default function Dashboard() {
             )}
           </div>
         )}
+        </> }
       </main>
 
       {showUpload && <UploadZone onData={handleUploadData} onClose={() => setShowUpload(false)}/>}

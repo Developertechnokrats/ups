@@ -252,3 +252,102 @@ function csvCell(val) {
   return (s.includes(',') || s.includes('"') || s.includes('\n'))
     ? `"${s.replace(/"/g, '""')}"` : s
 }
+
+// ── Appointment file parser ───────────────────────────────────────────────
+// Handles GHL export — flexible column detection
+export function parseAppointmentRows(rows) {
+  const result = []
+  const seenKey = new Set() // dedupe by email+date
+
+  for (const r of rows) {
+    // Detect email column flexibly
+    const email = (
+      r['Email'] || r['email'] || r['Contact Email'] || r['contact_email'] ||
+      r['Email Address'] || r['email_address'] || ''
+    ).trim().toLowerCase()
+
+    if (!email) continue
+
+    // Detect date column
+    const rawDate = (
+      r['Appointment Date'] || r['appointment_date'] || r['Date'] ||
+      r['Start Date'] || r['start_date'] || r['Scheduled Date'] || r['scheduled_date'] ||
+      r['Created At'] || r['created_at'] || ''
+    ).toString().trim()
+
+    const parsedDate = parseDate(rawDate)
+    const isoDate = parsedDate ? fmtISO(parsedDate) : null
+
+    // Dedupe by email + date
+    const key = `${email}|${isoDate || rawDate}`
+    if (seenKey.has(key)) continue
+    seenKey.add(key)
+
+    result.push({
+      email,
+      contact_name: (
+        r['Contact Name'] || r['contact_name'] || r['Name'] || r['Full Name'] ||
+        `${r['First Name'] || ''} ${r['Last Name'] || ''}`.trim() || ''
+      ).trim(),
+      appointment_date:  isoDate,
+      appointment_title: (r['Title'] || r['title'] || r['Appointment Title'] || r['appointment_title'] || r['Calendar'] || '').trim(),
+      status:            (r['Status'] || r['status'] || r['Appointment Status'] || '').trim(),
+      calendar_name:     (r['Calendar'] || r['calendar'] || r['Calendar Name'] || '').trim(),
+      raw_date:          rawDate,
+    })
+  }
+
+  return result
+}
+
+export function parseAppointmentCSVStream(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const allRows = []
+    let count = 0
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      chunkSize: 1024 * 512,
+      chunk(results) {
+        allRows.push(...results.data)
+        count += results.data.length
+        onProgress?.({ stage: 'parsing', done: count, pct: Math.min(90, Math.round(count / 500)) })
+      },
+      complete() {
+        onProgress?.({ stage: 'processing', pct: 95 })
+        setTimeout(() => {
+          try { resolve(parseAppointmentRows(allRows)) }
+          catch(e) { reject(e) }
+        }, 0)
+      },
+      error(err) { reject(new Error('CSV parse error: ' + err.message)) }
+    })
+  })
+}
+
+export function parseAppointmentExcelStream(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onprogress = e => {
+      if (e.lengthComputable)
+        onProgress?.({ stage: 'reading', pct: Math.round(e.loaded / e.total * 50) })
+    }
+    reader.onload = e => {
+      try {
+        onProgress?.({ stage: 'parsing', pct: 60 })
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array', cellDates: true, dense: true })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const data = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false })
+        onProgress?.({ stage: 'processing', pct: 85 })
+        setTimeout(() => {
+          try { resolve(parseAppointmentRows(data)) }
+          catch(e) { reject(e) }
+        }, 0)
+      } catch(e) { reject(new Error('Excel parse error: ' + e.message)) }
+    }
+    reader.onerror = () => reject(new Error('File read failed'))
+    reader.readAsArrayBuffer(file)
+  })
+}
+
+

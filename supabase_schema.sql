@@ -109,3 +109,131 @@ alter table applicants
   add column if not exists ghl_status     text;   -- 'synced' | 'error' | null
 
 create index if not exists idx_applicants_ghl_id on applicants(ghl_contact_id);
+
+-- ============================================================
+-- Appointments table — from GHL export file
+-- Run these in Supabase SQL Editor
+-- ============================================================
+
+create table if not exists appointments (
+  id            bigint generated always as identity primary key,
+  email         text not null,
+  contact_name  text,
+  appointment_date  date,
+  appointment_title text,
+  status        text,
+  calendar_name text,
+  raw_date      text,   -- keep original string for debugging
+  created_at    timestamptz default now(),
+  updated_at    timestamptz default now()
+);
+
+-- One row per appointment (a person can have multiple)
+create index if not exists idx_appointments_email on appointments(email);
+create index if not exists idx_appointments_date  on appointments(appointment_date);
+
+-- RLS
+alter table appointments enable row level security;
+drop policy if exists "Allow all on appointments" on appointments;
+create policy "Allow all on appointments" on appointments for all using (true) with check (true);
+
+-- Add disqualified tracking to applicants if not exists
+alter table applicants add column if not exists has_appointment boolean default false;
+
+-- View: Fresh to Contact
+-- Logic: status NOT IN (Hired, Disqualified) AND no appointment ever
+create or replace view fresh_to_contact as
+select
+  a.id,
+  a.applicant_id,
+  a.firstname,
+  a.lastname,
+  a.email,
+  a.phone,
+  a.city,
+  a.state,
+  a.start_date,
+  a.applied_count,
+  a.last_appointment_date,
+  a.ghl_contact_id,
+  a.ghl_status,
+  a.tags
+from applicants a
+where
+  -- Exclude Hired
+  not exists (
+    select 1 from applications ap
+    where ap.email = a.email
+    and lower(ap.status_name) = 'hired'
+  )
+  -- Exclude Disqualified
+  and not exists (
+    select 1 from applications ap
+    where ap.email = a.email
+    and lower(ap.status_name) = 'disqualified'
+  )
+  -- Exclude anyone with an appointment
+  and not exists (
+    select 1 from appointments apt
+    where apt.email = a.email
+  );
+
+-- Count for stats
+create or replace view fresh_to_contact_count as
+select count(*) as total from fresh_to_contact;
+
+-- ============================================================
+-- Appointments table (from GHL export)
+-- ============================================================
+
+drop table if exists appointments cascade;
+
+create table appointments (
+  id                bigint generated always as identity primary key,
+  appointment_id    text unique,                  -- GHL "Appointment id"
+  email             text not null,
+  contact_name      text,
+  requested_time    timestamptz,                  -- "Requested time"
+  date_added        timestamptz,                  -- "Date added"
+  calendar          text,
+  phone             text,
+  appointment_owner text,
+  mode              text,
+  source            text,
+  outcome           text,                         -- confirmed, cancelled, etc.
+  rescheduled       text,
+  created_at        timestamptz default now()
+);
+
+create index if not exists idx_appt_email         on appointments(email);
+create index if not exists idx_appt_requested     on appointments(requested_time);
+create index if not exists idx_appt_appointment_id on appointments(appointment_id);
+
+alter table appointments enable row level security;
+drop policy if exists "Allow all on appointments" on appointments;
+create policy "Allow all on appointments" on appointments for all using (true) with check (true);
+
+-- ============================================================
+-- fresh_to_contact VIEW
+-- Logic:
+--   1. No application with status Hired or Disqualified
+--   2. Email NOT in appointments table
+-- ============================================================
+
+drop view if exists fresh_to_contact;
+
+create view fresh_to_contact as
+select a.*
+from applicants a
+where
+  -- No Hired status across any application
+  not exists (
+    select 1 from applications ap
+    where lower(ap.email) = lower(a.email)
+      and lower(ap.status_name) in ('hired', 'disqualified')
+  )
+  -- No appointment ever booked
+  and not exists (
+    select 1 from appointments apt
+    where lower(apt.email) = lower(a.email)
+  );

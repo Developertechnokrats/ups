@@ -242,3 +242,74 @@ export async function buildNotesForApplicants(applicants) {
     return { ...a, notes }
   })
 }
+
+// ── Appointments ──────────────────────────────────────────────────────────
+
+export async function upsertAppointments(rows, onProgress) {
+  if (!supabase) throw new Error('Supabase not configured')
+
+  // Delete all existing for these emails first (clean upsert)
+  const emails = [...new Set(rows.map(r => r.email).filter(Boolean))]
+  for (let i = 0; i < emails.length; i += 200) {
+    const { error } = await supabase
+      .from('appointments')
+      .delete()
+      .in('email', emails.slice(i, i + 200))
+    if (error) throw new Error('Appointment cleanup failed: ' + error.message)
+  }
+
+  // Insert in batches of 500
+  for (let i = 0; i < rows.length; i += 500) {
+    const batch = rows.slice(i, i + 500)
+    const { error } = await supabase.from('appointments').insert(batch)
+    if (error) throw new Error('Appointment insert failed: ' + error.message)
+    onProgress?.({ done: Math.min(i + 500, rows.length), total: rows.length })
+    if (i + 500 < rows.length) await new Promise(r => setTimeout(r, 50))
+  }
+}
+
+export async function fetchAppointmentStats() {
+  if (!supabase) return { totalAppointments: 0, uniqueEmails: 0 }
+  const [r1, r2] = await Promise.all([
+    supabase.from('appointments').select('*', { count: 'exact', head: true }),
+    supabase.rpc('count_unique_appointment_emails').single(),
+  ])
+  return {
+    totalAppointments: r1.count ?? 0,
+    uniqueEmails: r2.data ?? 0,
+  }
+}
+
+export async function fetchFreshToContact({ fromDate, toDate, page = 0, search = '' } = {}) {
+  if (!supabase) throw new Error('Supabase not configured')
+  const from = page * PAGE_SIZE
+  const to   = from + PAGE_SIZE - 1
+
+  let q = supabase
+    .from('fresh_to_contact')
+    .select('*', { count: 'exact' })
+    .order('applied_count', { ascending: false })
+    .order('last_appointment_date', { ascending: false })
+    .range(from, to)
+
+  if (fromDate) q = q.gte('start_date', fromDate)
+  if (toDate)   q = q.lte('start_date', toDate)
+  if (search?.trim()) {
+    const s = search.trim()
+    q = q.or(`firstname.ilike.%${s}%,lastname.ilike.%${s}%,email.ilike.%${s}%,phone.ilike.%${s}%`)
+  }
+
+  const { data, error, count } = await q
+  if (error) throw error
+  return { applicants: data || [], totalCount: count ?? 0 }
+}
+
+export async function fetchFreshStats() {
+  if (!supabase) throw new Error('Supabase not configured')
+  const { count, error } = await supabase
+    .from('fresh_to_contact')
+    .select('*', { count: 'exact', head: true })
+  if (error) throw error
+  return { freshCount: count ?? 0 }
+}
+
