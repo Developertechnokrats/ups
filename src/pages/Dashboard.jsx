@@ -107,16 +107,18 @@ export default function Dashboard() {
         fetchFreshStats().catch(() => ({})),
       ])
 
-      // Join applicants + applications, enrich safely
+      // Join applicants + applications, enrich safely — lowercase email for case-insensitive match
       const appMap = {}
       for (const a of result.applications) {
-        if (!appMap[a.email]) appMap[a.email] = []
-        appMap[a.email].push(a)
+        const key = (a.email || '').toLowerCase()
+        if (!appMap[key]) appMap[key] = []
+        appMap[key].push(a)
       }
       const enriched = []
       for (const row of result.applicants) {
         try {
-          enriched.push(...enrichForDisplay([{ ...row, applications: appMap[row.email] || [] }]))
+          const key = (row.email || '').toLowerCase()
+          enriched.push(...enrichForDisplay([{ ...row, applications: appMap[key] || [] }]))
         } catch(_) {
           enriched.push({ ...row, jobs: [], tags: '' })
         }
@@ -176,11 +178,11 @@ export default function Dashboard() {
         setError('Save failed: ' + e.message + ' — showing locally.')
         // Show locally
         const appMap = {}
-        for (const a of applicationRows) { if (!appMap[a.email]) appMap[a.email] = []; appMap[a.email].push(a) }
+        for (const a of applicationRows) { const k=(a.email||'').toLowerCase(); if (!appMap[k]) appMap[k] = []; appMap[k].push(a) }
         const src = viewMode === 'duplicates' ? applicantRows.filter(a => a.applied_count > 1) : applicantRows
         const enriched = []
         for (const row of src.slice(0, PAGE_SIZE)) {
-          try { enriched.push(...enrichForDisplay([{ ...row, applications: appMap[row.email] || [] }])) }
+          try { enriched.push(...enrichForDisplay([{ ...row, applications: appMap[(row.email||'').toLowerCase()] || [] }])) }
           catch(_) { enriched.push({ ...row, jobs: [], tags: '' }) }
         }
         setApplicants(enriched)
@@ -189,11 +191,11 @@ export default function Dashboard() {
       }
     } else {
       const appMap = {}
-      for (const a of applicationRows) { if (!appMap[a.email]) appMap[a.email] = []; appMap[a.email].push(a) }
+      for (const a of applicationRows) { const k=(a.email||'').toLowerCase(); if (!appMap[k]) appMap[k] = []; appMap[k].push(a) }
       const src = viewMode === 'duplicates' ? applicantRows.filter(a => a.applied_count > 1) : applicantRows
       const enriched = []
       for (const row of src.slice(0, PAGE_SIZE)) {
-        try { enriched.push(...enrichForDisplay([{ ...row, applications: appMap[row.email] || [] }])) }
+        try { enriched.push(...enrichForDisplay([{ ...row, applications: appMap[(row.email||'').toLowerCase()] || [] }])) }
         catch(_) { enriched.push({ ...row, jobs: [], tags: '' }) }
       }
       setApplicants(enriched)
