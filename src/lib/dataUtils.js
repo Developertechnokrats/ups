@@ -256,44 +256,39 @@ function csvCell(val) {
 // ── Appointment file parser ───────────────────────────────────────────────
 // Handles GHL export — flexible column detection
 export function parseAppointmentRows(rows) {
-  const result = []
-  const seenKey = new Set() // dedupe by email+date
+  const result  = []
+  const seenId  = new Set()
 
   for (const r of rows) {
-    // Detect email column flexibly
-    const email = (
-      r['Email'] || r['email'] || r['Contact Email'] || r['contact_email'] ||
-      r['Email Address'] || r['email_address'] || ''
-    ).trim().toLowerCase()
-
+    const email = (r['Email'] || r['email'] || '').toString().trim().toLowerCase()
     if (!email) continue
 
-    // Detect date column
-    const rawDate = (
-      r['Appointment Date'] || r['appointment_date'] || r['Date'] ||
-      r['Start Date'] || r['start_date'] || r['Scheduled Date'] || r['scheduled_date'] ||
-      r['Created At'] || r['created_at'] || ''
-    ).toString().trim()
+    const apptId = (r['Appointment id'] || r['appointment_id'] || r['ID'] || '').toString().trim()
 
-    const parsedDate = parseDate(rawDate)
-    const isoDate = parsedDate ? fmtISO(parsedDate) : null
+    // Dedupe by appointment_id if present, else email+time
+    const dedupeKey = apptId || `${email}|${r['Requested time'] || ''}`
+    if (seenId.has(dedupeKey)) continue
+    seenId.add(dedupeKey)
 
-    // Dedupe by email + date
-    const key = `${email}|${isoDate || rawDate}`
-    if (seenKey.has(key)) continue
-    seenKey.add(key)
+    const parseGHLDate = (str) => {
+      if (!str) return null
+      const d = new Date(str.toString().trim())
+      return isNaN(d.getTime()) ? null : d.toISOString()
+    }
 
     result.push({
+      appointment_id:    apptId || null,
       email,
-      contact_name: (
-        r['Contact Name'] || r['contact_name'] || r['Name'] || r['Full Name'] ||
-        `${r['First Name'] || ''} ${r['Last Name'] || ''}`.trim() || ''
-      ).trim(),
-      appointment_date:  isoDate,
-      appointment_title: (r['Title'] || r['title'] || r['Appointment Title'] || r['appointment_title'] || r['Calendar'] || '').trim(),
-      status:            (r['Status'] || r['status'] || r['Appointment Status'] || '').trim(),
-      calendar_name:     (r['Calendar'] || r['calendar'] || r['Calendar Name'] || '').trim(),
-      raw_date:          rawDate,
+      contact_name:      (r['Contact name'] || r['Contact Name'] || '').toString().trim(),
+      requested_time:    parseGHLDate(r['Requested time'] || r['requested_time']),
+      date_added:        parseGHLDate(r['Date added']     || r['date_added']),
+      calendar:          (r['Calendar']          || '').toString().trim(),
+      phone:             (r['Phone']             || '').toString().trim(),
+      appointment_owner: (r['Appointment owner'] || '').toString().trim(),
+      mode:              (r['Mode']              || '').toString().trim(),
+      source:            (r['Source']            || '').toString().trim(),
+      outcome:           (r['Outcome']           || '').toString().trim(),
+      rescheduled:       (r['Rescheduled']       || '').toString().trim(),
     })
   }
 
