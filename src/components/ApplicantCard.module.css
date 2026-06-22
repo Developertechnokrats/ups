@@ -123,3 +123,11 @@
   color: var(--green-text);
 }
 .pushBtnSynced:hover { background: var(--green); color: white; }
+
+.interviewBadge {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 10px; font-weight: 600;
+  background: var(--blue-bg); color: var(--blue-text);
+  padding: 2px 7px; border-radius: 20px;
+  white-space: nowrap;
+}

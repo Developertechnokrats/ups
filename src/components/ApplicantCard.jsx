@@ -1,4 +1,4 @@
-import { ExternalLink, Briefcase, Calendar, Mail, Phone, Zap, CheckCircle } from 'lucide-react'
+import { ExternalLink, Briefcase, Calendar, Mail, Phone, Zap, CheckCircle, CalendarCheck } from 'lucide-react'
 import { safeDisplayDate } from '../lib/dataUtils'
 import styles from './ApplicantCard.module.css'
 
@@ -31,7 +31,8 @@ function formatDisplayDate(dateStr) {
 export default function ApplicantCard({ applicant, index, onViewDetails, onPushGHL }) {
   const [bg, fg] = AVATAR_COLORS[index % AVATAR_COLORS.length]
   const tags = applicant.tags || ''
-  const isSynced = applicant.ghl_status === 'synced'
+  const isSynced      = applicant.ghl_status === 'synced'
+  const hasInterview  = applicant.has_appointment === true
 
   return (
     <div className={styles.card}>
@@ -45,6 +46,9 @@ export default function ApplicantCard({ applicant, index, onViewDetails, onPushG
             <span className={styles.name}>{applicant.firstname} {applicant.lastname}</span>
             {isSynced && (
               <span className={styles.ghlBadge}><CheckCircle size={10}/> GHL Synced</span>
+            )}
+            {hasInterview && (
+              <span className={styles.interviewBadge}><CalendarCheck size={10}/> Interviewed</span>
             )}
           </div>
           <div className={styles.sub}>

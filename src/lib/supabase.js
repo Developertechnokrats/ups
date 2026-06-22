@@ -31,7 +31,7 @@ export async function fetchStats() {
 }
 
 // ── Paginated fetch — returns one page of applicants + their applications ─
-export async function fetchPage({ fromDate, toDate, duplicatesOnly = false, page = 0, search = '' } = {}) {
+export async function fetchPage({ fromDate, toDate, duplicatesOnly = false, page = 0, search = '', statusFilter = '', hasAppointmentFilter = '' } = {}) {
   if (!supabase) throw new Error('Supabase not configured')
 
   const from = page * PAGE_SIZE
@@ -45,9 +45,9 @@ export async function fetchPage({ fromDate, toDate, duplicatesOnly = false, page
     .order('last_appointment_date', { ascending: false })
     .range(from, to)
 
-  if (duplicatesOnly) q = q.gt('applied_count', 1)
-  if (fromDate)       q = q.gte('start_date', fromDate)
-  if (toDate)         q = q.lte('start_date', toDate)
+  if (duplicatesOnly)  q = q.gt('applied_count', 1)
+  if (fromDate)        q = q.gte('start_date', fromDate)
+  if (toDate)          q = q.lte('start_date', toDate)
   if (search?.trim()) {
     const s = search.trim()
     q = q.or(`firstname.ilike.%${s}%,lastname.ilike.%${s}%,email.ilike.%${s}%,phone.ilike.%${s}%`)
@@ -57,9 +57,9 @@ export async function fetchPage({ fromDate, toDate, duplicatesOnly = false, page
   if (error) throw error
   if (!applicants?.length) return { applicants: [], applications: [], totalCount: count ?? 0 }
 
-  // Step 2: fetch ALL applications for this page's applicants
-  // Must paginate: 50 applicants × avg jobs can easily exceed Supabase's 1000-row default limit
   const emails = applicants.map(a => a.email).filter(Boolean)
+
+  // Step 2: fetch applications for this page
   const allApplications = []
   let appFrom = 0
   const APP_PAGE = 1000
@@ -76,7 +76,61 @@ export async function fetchPage({ fromDate, toDate, duplicatesOnly = false, page
     appFrom += APP_PAGE
   }
 
-  return { applicants, applications: allApplications, totalCount: count ?? 0 }
+  // Step 3: fetch appointments for this page (for interview tag + modal tab)
+  const { data: apptData } = await supabase
+    .from('appointments')
+    .select('email, appointment_id, requested_time, calendar, outcome, contact_name, phone, appointment_owner, mode, source, rescheduled, date_added')
+    .in('email', emails)
+
+  // Also match by phone_normalized
+  const phoneNorms = applicants.map(a => a.phone_normalized).filter(Boolean)
+  let phoneAppts = []
+  if (phoneNorms.length) {
+    const { data: pd } = await supabase
+      .from('appointments')
+      .select('email, appointment_id, requested_time, calendar, outcome, contact_name, phone, appointment_owner, mode, source, rescheduled, date_added, phone_normalized')
+      .in('phone_normalized', phoneNorms)
+    phoneAppts = pd || []
+  }
+
+  // Build appointment map by applicant email
+  const apptMap = {}
+  for (const apt of [...(apptData || []), ...phoneAppts]) {
+    // Find which applicant this belongs to
+    const byEmail = applicants.find(a => a.email?.toLowerCase() === apt.email?.toLowerCase())
+    const byPhone = !byEmail && applicants.find(a => a.phone_normalized && apt.phone_normalized && a.phone_normalized === apt.phone_normalized)
+    const owner = byEmail || byPhone
+    if (!owner) continue
+    if (!apptMap[owner.email]) apptMap[owner.email] = []
+    // Avoid duplicates
+    if (!apptMap[owner.email].find(x => x.appointment_id === apt.appointment_id)) {
+      apptMap[owner.email].push(apt)
+    }
+  }
+
+  // Mark has_appointment on each applicant
+  const enrichedApplicants = applicants.map(a => ({
+    ...a,
+    has_appointment: !!(apptMap[a.email]?.length),
+    appointments:    (apptMap[a.email] || []).sort((x, y) => (y.requested_time || '') > (x.requested_time || '') ? 1 : -1),
+  }))
+
+  // Apply status filter (client-side, since it requires join to applications)
+  let filtered = enrichedApplicants
+  if (statusFilter?.trim()) {
+    const statusEmails = new Set(
+      allApplications
+        .filter(ap => ap.status_name?.toLowerCase().includes(statusFilter.toLowerCase()))
+        .map(ap => ap.email?.toLowerCase())
+    )
+    filtered = filtered.filter(a => statusEmails.has(a.email?.toLowerCase()))
+  }
+
+  // Apply has_appointment filter
+  if (hasAppointmentFilter === 'yes') filtered = filtered.filter(a => a.has_appointment)
+  if (hasAppointmentFilter === 'no')  filtered = filtered.filter(a => !a.has_appointment)
+
+  return { applicants: filtered, applications: allApplications, totalCount: count ?? 0 }
 }
 
 // ── Write — batched with progress ────────────────────────────────────────
@@ -499,4 +553,16 @@ export async function markAllAsContacted(email, contactName) {
       contact_name: contactName,
     }, { onConflict: 'appointment_id' })
   }
+}
+
+// ── Fetch unique status names for filter dropdown ─────────────────────────
+export async function fetchStatusNames() {
+  if (!supabase) return []
+  const { data, error } = await supabase
+    .from('applications')
+    .select('status_name')
+    .not('status_name', 'is', null)
+  if (error) return []
+  const unique = [...new Set((data || []).map(r => r.status_name).filter(Boolean))].sort()
+  return unique
 }

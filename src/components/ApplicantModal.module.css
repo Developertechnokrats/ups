@@ -263,3 +263,35 @@
   .thDept { display: none; }
   .dept   { display: none; }
 }
+
+/* ── Tabs ── */
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 0.5px solid var(--border);
+  padding: 0 24px;
+  flex-shrink: 0;
+  background: var(--surface);
+}
+
+.tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 16px;
+  font-size: 13px; font-weight: 500;
+  color: var(--text-muted);
+  background: none; border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer; white-space: nowrap;
+  margin-bottom: -0.5px;
+  transition: color 0.1s;
+}
+.tab:hover { color: var(--text); }
+.tabActive { color: var(--text); border-bottom-color: var(--text); }
+
+.interviewDot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  background: var(--blue);
+  border-radius: 50%;
+  margin-left: 2px;
+}

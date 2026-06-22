@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight, Zap, Leaf, AlertCircle, RotateCcw } from 'lucide-react'
-import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, buildNotesForApplicants, fetchFreshStats, fetchOrphanedStats, refreshComputedTables, hasSupabase, PAGE_SIZE } from '../lib/supabase'
+import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, buildNotesForApplicants, fetchFreshStats, fetchOrphanedStats, refreshComputedTables, fetchStatusNames, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 export const hasGHL = !!import.meta.env.VITE_GHL_TOKEN
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
@@ -42,6 +42,9 @@ export default function Dashboard() {
   const [showGHLDiag, setShowGHLDiag]           = useState(false)
   const [exporting, setExporting]       = useState(false)
   const [rebuilding, setRebuilding]     = useState(false)
+  const [statusFilter, setStatusFilter]   = useState('')
+  const [interviewFilter, setInterviewFilter] = useState('')
+  const [statusOptions, setStatusOptions] = useState([])
   const [freshStats, setFreshStats]     = useState({})
   const [orphanedStats, setOrphanedStats] = useState({})
 
@@ -99,7 +102,7 @@ export default function Dashboard() {
       const mode    = opts.mode    ?? viewMode
 
       const [result, stats, fStats] = await Promise.all([
-        fetchPage({ fromDate: from || undefined, toDate: to || undefined, duplicatesOnly: mode === 'duplicates', page, search }),
+        fetchPage({ fromDate: from || undefined, toDate: to || undefined, duplicatesOnly: mode === 'duplicates', page, search, statusFilter: opts.statusFilter ?? statusFilter, hasAppointmentFilter: opts.interviewFilter ?? interviewFilter }),
         fetchStats(),
         fetchFreshStats().catch(() => ({})),
       ])
