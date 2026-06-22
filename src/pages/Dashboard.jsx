@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight, Zap, Leaf, AlertCircle } from 'lucide-react'
-import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, buildNotesForApplicants, fetchFreshStats, fetchOrphanedStats, hasSupabase, PAGE_SIZE } from '../lib/supabase'
+import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, buildNotesForApplicants, fetchFreshStats, fetchOrphanedStats, refreshComputedTables, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 export const hasGHL = !!import.meta.env.VITE_GHL_TOKEN
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
@@ -150,6 +150,7 @@ export default function Dashboard() {
       try {
         await upsertAllData(applicantRows, applicationRows, prog => setSaveProgress({ ...prog }))
         setSaveProgress({ stage: 'done', done: 0, total: 0 })
+        await refreshComputedTables().catch(() => {})
         await loadPage(0)
         setSaveProgress(null)
       } catch(e) {

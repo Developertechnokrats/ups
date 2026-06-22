@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { Upload, FileText, X, CheckCircle, RefreshCw } from 'lucide-react'
 import { parseAppointmentCSVStream, parseAppointmentExcelStream } from '../lib/dataUtils'
-import { upsertAppointments } from '../lib/supabase'
+import { upsertAppointments, refreshComputedTables } from '../lib/supabase'
 import styles from './UploadZone.module.css'
 
 export default function AppointmentUpload({ onClose, onComplete }) {
@@ -43,6 +43,9 @@ export default function AppointmentUpload({ onClose, onComplete }) {
       await upsertAppointments(rows, ({ done: d, total }) => {
         setSaveP({ done: d, total })
       })
+
+      setProgress({ pct: 100, msg: 'Refreshing Fresh to Contact list…' })
+      await refreshComputedTables()
 
       setDone(true)
       setProgress({ pct: 100, msg: `✅ ${rows.length.toLocaleString()} appointments saved successfully.` })

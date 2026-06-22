@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { RefreshCw, Search, CheckCircle, AlertCircle, ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
-import { fetchOrphanedAppointments, fetchOrphanedStats, markAsContacted, hasSupabase, PAGE_SIZE } from '../lib/supabase'
+import { fetchOrphanedAppointments, fetchOrphanedStats, markAsContacted, refreshComputedTables, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 import styles from './Dashboard.module.css'
 import oStyles from './OrphanedAppointments.module.css'
 
@@ -38,6 +38,7 @@ export default function OrphanedAppointments() {
     setMarking(m => ({ ...m, [apt.appointment_id]: true }))
     try {
       await markAsContacted(apt)
+      await refreshComputedTables()
       // Remove from list immediately
       setAppointments(prev => prev.filter(a => a.appointment_id !== apt.appointment_id))
       setTotalCount(c => c - 1)

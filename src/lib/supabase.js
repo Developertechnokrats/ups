@@ -285,12 +285,24 @@ export async function fetchFreshToContact({ fromDate, toDate, page = 0, search =
   const from = page * PAGE_SIZE
   const to   = from + PAGE_SIZE - 1
 
+  // Step 1: get emails from cache (fast, indexed)
+  const { data: cacheRows, error: cacheErr, count: totalCount } = await supabase
+    .from('fresh_to_contact_cache')
+    .select('email', { count: 'exact' })
+    .range(from, to)
+
+  if (cacheErr) throw cacheErr
+  if (!cacheRows?.length) return { applicants: [], totalCount: totalCount ?? 0 }
+
+  const emails = cacheRows.map(r => r.email)
+
+  // Step 2: get full applicant data for this page's emails
   let q = supabase
-    .from('fresh_to_contact')
-    .select('*', { count: 'exact' })
+    .from('applicants')
+    .select('*')
+    .in('email', emails)
     .order('applied_count', { ascending: false })
     .order('last_appointment_date', { ascending: false })
-    .range(from, to)
 
   if (fromDate) q = q.gte('start_date', fromDate)
   if (toDate)   q = q.lte('start_date', toDate)
@@ -299,18 +311,21 @@ export async function fetchFreshToContact({ fromDate, toDate, page = 0, search =
     q = q.or(`firstname.ilike.%${s}%,lastname.ilike.%${s}%,email.ilike.%${s}%,phone.ilike.%${s}%`)
   }
 
-  const { data, error, count } = await q
+  const { data, error } = await q
   if (error) throw error
-  return { applicants: data || [], totalCount: count ?? 0 }
+  return { applicants: data || [], totalCount: totalCount ?? 0 }
 }
 
 export async function fetchFreshStats() {
-  if (!supabase) throw new Error('Supabase not configured')
-  const { count, error } = await supabase
-    .from('fresh_to_contact')
-    .select('*', { count: 'exact', head: true })
-  if (error) throw error
-  return { freshCount: count ?? 0 }
+  if (!supabase) return { freshCount: 0 }
+  const [r1, r2] = await Promise.all([
+    supabase.from('fresh_to_contact_cache').select('*', { count: 'exact', head: true }),
+    supabase.from('appointments').select('*', { count: 'exact', head: true }),
+  ])
+  return {
+    freshCount:       r1.count ?? 0,
+    appointmentCount: r2.count ?? 0,
+  }
 }
 
 
@@ -321,7 +336,7 @@ export async function fetchOrphanedAppointments({ page = 0, search = '' } = {}) 
   const to   = from + PAGE_SIZE - 1
 
   let q = supabase
-    .from('orphaned_appointments')
+    .from('orphaned_appointments_cache')
     .select('*', { count: 'exact' })
     .order('requested_time', { ascending: false })
     .range(from, to)
@@ -339,7 +354,7 @@ export async function fetchOrphanedAppointments({ page = 0, search = '' } = {}) 
 export async function fetchOrphanedStats() {
   if (!supabase) return { orphanedCount: 0 }
   const { count, error } = await supabase
-    .from('orphaned_appointments')
+    .from('orphaned_appointments_cache')
     .select('*', { count: 'exact', head: true })
   if (error) return { orphanedCount: 0 }
   return { orphanedCount: count ?? 0 }
@@ -364,4 +379,11 @@ export async function unmarkContacted(appointmentId) {
     .delete()
     .eq('appointment_id', appointmentId)
   if (error) throw new Error('Unmark failed: ' + error.message)
+}
+
+// ── Refresh pre-computed cache tables ─────────────────────────────────────
+export async function refreshComputedTables() {
+  if (!supabase) return
+  const { error } = await supabase.rpc('refresh_computed_tables')
+  if (error) throw new Error('Cache refresh failed: ' + error.message)
 }
