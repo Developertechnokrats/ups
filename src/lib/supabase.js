@@ -248,23 +248,33 @@ export async function buildNotesForApplicants(applicants) {
 export async function upsertAppointments(rows, onProgress) {
   if (!supabase) throw new Error('Supabase not configured')
 
-  // Delete all existing for these emails first (clean upsert)
-  const emails = [...new Set(rows.map(r => r.email).filter(Boolean))]
-  for (let i = 0; i < emails.length; i += 200) {
+  const withId    = rows.filter(r => r.appointment_id)
+  const withoutId = rows.filter(r => !r.appointment_id)
+
+  let done = 0
+  const total = rows.length
+
+  // Upsert rows with appointment_id — conflict = update
+  for (let i = 0; i < withId.length; i += 500) {
+    const batch = withId.slice(i, i + 500)
     const { error } = await supabase
       .from('appointments')
-      .delete()
-      .in('email', emails.slice(i, i + 200))
-    if (error) throw new Error('Appointment cleanup failed: ' + error.message)
+      .upsert(batch, { onConflict: 'appointment_id' })
+    if (error) throw new Error('Appointment upsert failed: ' + error.message)
+    done += batch.length
+    onProgress?.({ done: Math.min(done, total), total })
+    if (i + 500 < withId.length) await new Promise(r => setTimeout(r, 50))
   }
 
-  // Insert in batches of 500
-  for (let i = 0; i < rows.length; i += 500) {
-    const batch = rows.slice(i, i + 500)
-    const { error } = await supabase.from('appointments').insert(batch)
+  // For rows without appointment_id — insert ignoring duplicates
+  for (let i = 0; i < withoutId.length; i += 500) {
+    const batch = withoutId.slice(i, i + 500)
+    const { error } = await supabase
+      .from('appointments')
+      .upsert(batch, { ignoreDuplicates: true })
     if (error) throw new Error('Appointment insert failed: ' + error.message)
-    onProgress?.({ done: Math.min(i + 500, rows.length), total: rows.length })
-    if (i + 500 < rows.length) await new Promise(r => setTimeout(r, 50))
+    done += batch.length
+    onProgress?.({ done: Math.min(done, total), total })
   }
 }
 
