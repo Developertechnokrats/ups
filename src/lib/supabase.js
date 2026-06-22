@@ -313,3 +313,55 @@ export async function fetchFreshStats() {
   return { freshCount: count ?? 0 }
 }
 
+
+// ── Orphaned Appointments ─────────────────────────────────────────────────
+export async function fetchOrphanedAppointments({ page = 0, search = '' } = {}) {
+  if (!supabase) throw new Error('Supabase not configured')
+  const from = page * PAGE_SIZE
+  const to   = from + PAGE_SIZE - 1
+
+  let q = supabase
+    .from('orphaned_appointments')
+    .select('*', { count: 'exact' })
+    .order('requested_time', { ascending: false })
+    .range(from, to)
+
+  if (search?.trim()) {
+    const s = search.trim()
+    q = q.or(`email.ilike.%${s}%,contact_name.ilike.%${s}%,phone.ilike.%${s}%`)
+  }
+
+  const { data, error, count } = await q
+  if (error) throw error
+  return { appointments: data || [], totalCount: count ?? 0 }
+}
+
+export async function fetchOrphanedStats() {
+  if (!supabase) return { orphanedCount: 0 }
+  const { count, error } = await supabase
+    .from('orphaned_appointments')
+    .select('*', { count: 'exact', head: true })
+  if (error) return { orphanedCount: 0 }
+  return { orphanedCount: count ?? 0 }
+}
+
+export async function markAsContacted(appointment) {
+  if (!supabase) throw new Error('Supabase not configured')
+  const { error } = await supabase
+    .from('contacted_overrides')
+    .upsert({
+      appointment_id: appointment.appointment_id,
+      email:          appointment.email,
+      contact_name:   appointment.contact_name,
+    }, { onConflict: 'appointment_id' })
+  if (error) throw new Error('Mark as contacted failed: ' + error.message)
+}
+
+export async function unmarkContacted(appointmentId) {
+  if (!supabase) throw new Error('Supabase not configured')
+  const { error } = await supabase
+    .from('contacted_overrides')
+    .delete()
+    .eq('appointment_id', appointmentId)
+  if (error) throw new Error('Unmark failed: ' + error.message)
+}

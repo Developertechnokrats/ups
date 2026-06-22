@@ -110,102 +110,149 @@ alter table applicants
 
 create index if not exists idx_applicants_ghl_id on applicants(ghl_contact_id);
 
+
 -- ============================================================
--- Appointments table — from GHL export file
--- Run these in Supabase SQL Editor
+-- Appointments table — from GHL export
+-- (correct column names matching GHL export file)
 -- ============================================================
 
 create table if not exists appointments (
-  id            bigint generated always as identity primary key,
-  email         text not null,
-  contact_name  text,
-  appointment_date  date,
-  appointment_title text,
-  status        text,
-  calendar_name text,
-  raw_date      text,   -- keep original string for debugging
-  created_at    timestamptz default now(),
-  updated_at    timestamptz default now()
+  id                bigint generated always as identity primary key,
+  appointment_id    text unique,
+  email             text not null,
+  contact_name      text,
+  requested_time    timestamptz,
+  date_added        timestamptz,
+  calendar          text,
+  phone             text,
+  appointment_owner text,
+  mode              text,
+  source            text,
+  outcome           text,
+  rescheduled       text,
+  created_at        timestamptz default now()
 );
 
--- One row per appointment (a person can have multiple)
-create index if not exists idx_appointments_email on appointments(email);
-create index if not exists idx_appointments_date  on appointments(appointment_date);
+create index if not exists idx_appt_email          on appointments(email);
+create index if not exists idx_appt_phone          on appointments(phone);
+create index if not exists idx_appt_requested      on appointments(requested_time);
+create index if not exists idx_appt_appointment_id on appointments(appointment_id);
 
 -- RLS
 alter table appointments enable row level security;
 drop policy if exists "Allow all on appointments" on appointments;
 create policy "Allow all on appointments" on appointments for all using (true) with check (true);
 
+
+-- Add normalized phone columns for fast indexed phone matching
+alter table applicants   add column if not exists phone_normalized text;
+alter table appointments add column if not exists phone_normalized text;
+
+-- Populate normalized phones (last 10 digits, digits only)
+update applicants
+set phone_normalized = right(regexp_replace(phone, '[^0-9]', '', 'g'), 10)
+where phone is not null and length(regexp_replace(phone, '[^0-9]', '', 'g')) >= 10;
+
+update appointments
+set phone_normalized = right(regexp_replace(phone, '[^0-9]', '', 'g'), 10)
+where phone is not null and length(regexp_replace(phone, '[^0-9]', '', 'g')) >= 10;
+
+-- Index normalized phones and lowercased emails for fast view queries
+create index if not exists idx_applicants_phone_norm   on applicants(phone_normalized);
+create index if not exists idx_appointments_phone_norm on appointments(phone_normalized);
+create index if not exists idx_appointments_email_lower on appointments(lower(email));
+create index if not exists idx_applicants_email_lower   on applicants(lower(email));
+
 -- Add has_appointment column if not exists
 alter table applicants add column if not exists has_appointment boolean default false;
 
 -- View: Fresh to Contact
--- Logic: no Hired/Disqualified status AND no appointment ever booked
+-- Uses pre-computed phone_normalized for fast indexed matching (no timeout)
 drop view if exists fresh_to_contact_count;
 drop view if exists fresh_to_contact;
 
 create view fresh_to_contact as
 select
-  a.id,
-  a.applicant_id,
-  a.firstname,
-  a.lastname,
-  a.email,
-  a.phone,
-  a.city,
-  a.state,
-  a.start_date,
-  a.applied_count,
-  a.last_appointment_date,
-  a.ghl_contact_id,
-  a.ghl_status
+  a.id, a.applicant_id, a.firstname, a.lastname, a.email, a.phone,
+  a.city, a.state, a.start_date, a.applied_count,
+  a.last_appointment_date, a.ghl_contact_id, a.ghl_status
 from applicants a
 where
+  -- No Hired or Disqualified status
   not exists (
     select 1 from applications ap
     where lower(ap.email) = lower(a.email)
       and lower(ap.status_name) in ('hired', 'disqualified')
   )
+  -- No appointment matched by EMAIL or PHONE (pre-computed, indexed)
   and not exists (
     select 1 from appointments apt
     where lower(apt.email) = lower(a.email)
+       or (a.phone_normalized is not null
+           and apt.phone_normalized is not null
+           and apt.phone_normalized = a.phone_normalized)
   );
 
 -- ============================================================
--- Appointments table (from GHL export)
+-- fresh_to_contact VIEW
+-- (already created above with email + phone matching)
+
+
+-- ============================================================
+-- Orphaned Appointments & Manual Overrides
 -- ============================================================
 
-drop table if exists appointments cascade;
-
-create table appointments (
-  id                bigint generated always as identity primary key,
-  appointment_id    text unique,                  -- GHL "Appointment id"
-  email             text not null,
-  contact_name      text,
-  requested_time    timestamptz,                  -- "Requested time"
-  date_added        timestamptz,                  -- "Date added"
-  calendar          text,
-  phone             text,
-  appointment_owner text,
-  mode              text,
-  source            text,
-  outcome           text,                         -- confirmed, cancelled, etc.
-  rescheduled       text,
-  created_at        timestamptz default now()
+-- Table to store manual "mark as contacted" actions
+create table if not exists contacted_overrides (
+  id             bigint generated always as identity primary key,
+  appointment_id text unique not null,
+  email          text,
+  contact_name   text,
+  note           text,
+  marked_at      timestamptz default now()
 );
 
-create index if not exists idx_appt_email         on appointments(email);
-create index if not exists idx_appt_requested     on appointments(requested_time);
-create index if not exists idx_appt_appointment_id on appointments(appointment_id);
+create index if not exists idx_overrides_appointment_id on contacted_overrides(appointment_id);
 
-alter table appointments enable row level security;
-drop policy if exists "Allow all on appointments" on appointments;
-create policy "Allow all on appointments" on appointments for all using (true) with check (true);
+alter table contacted_overrides enable row level security;
+drop policy if exists "Allow all on contacted_overrides" on contacted_overrides;
+create policy "Allow all on contacted_overrides" on contacted_overrides for all using (true) with check (true);
 
--- ============================================================
--- fresh_to_contact VIEW
--- Logic:
---   1. No application with status Hired or Disqualified
---   2. Email NOT in appointments table
--- (view already created above)
+-- View: Orphaned Appointments
+-- Appointments that have NO match in applicants by email or phone_normalized
+-- AND have not been manually marked as contacted
+drop view if exists orphaned_appointments;
+
+create view orphaned_appointments as
+select
+  apt.id,
+  apt.appointment_id,
+  apt.email,
+  apt.contact_name,
+  apt.phone,
+  apt.phone_normalized,
+  apt.requested_time,
+  apt.calendar,
+  apt.outcome,
+  apt.source,
+  apt.rescheduled,
+  apt.created_at
+from appointments apt
+where
+  -- No match by email
+  not exists (
+    select 1 from applicants a
+    where lower(a.email) = lower(apt.email)
+  )
+  -- No match by phone_normalized
+  and not exists (
+    select 1 from applicants a
+    where a.phone_normalized is not null
+      and apt.phone_normalized is not null
+      and a.phone_normalized = apt.phone_normalized
+  )
+  -- Not manually marked as contacted
+  and not exists (
+    select 1 from contacted_overrides co
+    where co.appointment_id = apt.appointment_id
+  );

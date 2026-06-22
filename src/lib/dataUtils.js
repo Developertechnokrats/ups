@@ -116,6 +116,7 @@ export function processRawRows(rows) {
       start_date:            fmtISO(startD),
       applied_count:         apps.length,
       last_appointment_date: fmtISO(lastDate),
+      phone_normalized: normalizePhone((first['Phone Number'] || first['Phone'] || '').trim()),
     })
 
     for (const a of apps) {
@@ -289,6 +290,7 @@ export function parseAppointmentRows(rows) {
       source:            (r['Source']            || '').toString().trim(),
       outcome:           (r['Outcome']           || '').toString().trim(),
       rescheduled:       (r['Rescheduled']       || '').toString().trim(),
+      phone_normalized:  normalizePhone((r['Phone'] || '').toString().trim()),
     })
   }
 

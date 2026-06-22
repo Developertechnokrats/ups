@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight, Zap, Leaf } from 'lucide-react'
-import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, buildNotesForApplicants, fetchFreshStats, hasSupabase, PAGE_SIZE } from '../lib/supabase'
+import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight, Zap, Leaf, AlertCircle } from 'lucide-react'
+import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, buildNotesForApplicants, fetchFreshStats, fetchOrphanedStats, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 export const hasGHL = !!import.meta.env.VITE_GHL_TOKEN
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
 import StatsBar from '../components/StatsBar'
@@ -11,6 +11,7 @@ import ApplicantModal from '../components/ApplicantModal'
 import GHLPushModal from '../components/GHLPushModal'
 import GHLDiag from '../components/GHLDiag'
 import FreshToContact from './FreshToContact'
+import OrphanedAppointments from './OrphanedAppointments'
 import styles from './Dashboard.module.css'
 
 const TAG_FILTERS = ['Any type', 'Armed', 'Unarmed', 'Admin', 'Supervisor']
@@ -41,6 +42,7 @@ export default function Dashboard() {
   const [showGHLDiag, setShowGHLDiag]           = useState(false)
   const [exporting, setExporting]       = useState(false)
   const [freshStats, setFreshStats]     = useState({})
+  const [orphanedStats, setOrphanedStats] = useState({})
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
@@ -79,10 +81,11 @@ export default function Dashboard() {
       const to      = opts.to      ?? toDate
       const mode    = opts.mode    ?? viewMode
 
-      const [result, stats, fStats] = await Promise.all([
+      const [result, stats, fStats, oStats] = await Promise.all([
         fetchPage({ fromDate: from || undefined, toDate: to || undefined, duplicatesOnly: mode === 'duplicates', page, search }),
         fetchStats(),
         fetchFreshStats().catch(() => ({})),
+        fetchOrphanedStats().catch(() => ({})),
       ])
 
       // Join applicants + applications, enrich safely
@@ -105,6 +108,7 @@ export default function Dashboard() {
       setCurrentPage(page)
       setDbStats(stats)
       setFreshStats(fStats)
+      setOrphanedStats(oStats)
       setDbMode(true)
     } catch(e) {
       setError('Supabase fetch error: ' + e.message)
@@ -230,6 +234,12 @@ export default function Dashboard() {
               <span className={styles.navCount} style={{background:'var(--green-bg)',color:'var(--green-text)'}}>{freshStats.freshCount.toLocaleString()}</span>
             )}
           </button>
+          <button className={`${styles.navItem} ${viewMode==='orphaned' ? styles.active : ''}`} onClick={() => handleViewChange('orphaned')}>
+            <AlertCircle size={15}/> Orphaned Appts
+            {orphanedStats.orphanedCount > 0 && (
+              <span className={styles.navCount} style={{background:'var(--amber-bg)',color:'var(--amber-text)'}}>{orphanedStats.orphanedCount.toLocaleString()}</span>
+            )}
+          </button>
         </nav>
 
         {Object.keys(dbStats).length > 0 && (
@@ -255,9 +265,10 @@ export default function Dashboard() {
 
         {/* Fresh to Contact — rendered as its own page */}
         {viewMode === 'fresh' && <FreshToContact />}
+        {viewMode === 'orphaned' && <OrphanedAppointments />}
 
         {/* Main applicant views */}
-        {viewMode !== 'fresh' && <>
+        {viewMode !== 'fresh' && viewMode !== 'orphaned' && <>
         <div className={styles.topbar}>
           <div>
             <h1 className={styles.pageTitle}>{viewMode==='all' ? 'All Applicants' : 'Duplicate Applicants'}</h1>
