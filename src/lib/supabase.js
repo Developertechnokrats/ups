@@ -403,51 +403,60 @@ export async function refreshComputedTables() {
 export async function fetchOrphanedGrouped({ page = 0, search = '', sortBy = 'date_desc' } = {}) {
   if (!supabase) throw new Error('Supabase not configured')
 
-  let q = supabase
-    .from('orphaned_appointments_cache')
-    .select('email, contact_name, phone, appointment_id, requested_time, calendar, outcome')
-    .order('requested_time', { ascending: false })
+  // Fetch ALL rows (paginated through Supabase 1000-row limit)
+  // orphaned_appointments_cache is small enough to load fully for correct grouping/sorting
+  const allRows = []
+  let from = 0
+  const BATCH = 1000
+  while (true) {
+    let q = supabase
+      .from('orphaned_appointments_cache')
+      .select('email, contact_name, phone, appointment_id, requested_time')
+      .range(from, from + BATCH - 1)
 
-  if (search?.trim()) {
-    const s = search.trim()
-    q = q.or(`email.ilike.%${s}%,contact_name.ilike.%${s}%,phone.ilike.%${s}%`)
+    if (search?.trim()) {
+      const s = search.trim()
+      q = q.or(`email.ilike.%${s}%,contact_name.ilike.%${s}%,phone.ilike.%${s}%`)
+    }
+
+    const { data, error } = await q
+    if (error) throw error
+    if (!data || data.length === 0) break
+    allRows.push(...data)
+    if (data.length < BATCH) break
+    from += BATCH
   }
 
-  const { data, error } = await q
-  if (error) throw error
-
-  // Group by email
+  // Group by email — full dataset so sorting is accurate
   const grouped = {}
-  for (const row of (data || [])) {
+  for (const row of allRows) {
     const key = row.email.toLowerCase()
     if (!grouped[key]) {
       grouped[key] = {
-        email:           row.email,
-        contact_name:    row.contact_name,
-        phone:           row.phone,
-        latest_time:     row.requested_time,
-        count:           0,
-        appointment_ids: [],
+        email:        row.email,
+        contact_name: row.contact_name,
+        phone:        row.phone,
+        latest_time:  row.requested_time,
+        count:        0,
       }
     }
     grouped[key].count++
-    grouped[key].appointment_ids.push(row.appointment_id)
-    if (row.requested_time > grouped[key].latest_time) {
+    if ((row.requested_time || '') > (grouped[key].latest_time || '')) {
       grouped[key].latest_time  = row.requested_time
       grouped[key].contact_name = row.contact_name
     }
   }
 
-  // Sort by selected order
+  // Sort entire dataset then paginate
   const all = Object.values(grouped).sort((a, b) => {
     if (sortBy === 'count_desc') return b.count - a.count
     if (sortBy === 'count_asc')  return a.count - b.count
     if (sortBy === 'date_asc')   return (a.latest_time || '').localeCompare(b.latest_time || '')
-    return (b.latest_time || '').localeCompare(a.latest_time || '') // date_desc default
+    return (b.latest_time || '').localeCompare(a.latest_time || '')
   })
+
   const totalCount = all.length
   const paged = all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-
   return { contacts: paged, totalCount }
 }
 
