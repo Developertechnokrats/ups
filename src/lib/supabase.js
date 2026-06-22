@@ -400,11 +400,9 @@ export async function refreshComputedTables() {
 }
 
 // ── Orphaned grouped by email (one row per person, with appointment count) ─
-export async function fetchOrphanedGrouped({ page = 0, search = '' } = {}) {
+export async function fetchOrphanedGrouped({ page = 0, search = '', sortBy = 'date_desc' } = {}) {
   if (!supabase) throw new Error('Supabase not configured')
 
-  // Get distinct emails with counts from cache
-  // Supabase doesn't support GROUP BY directly, so fetch all emails then group in JS
   let q = supabase
     .from('orphaned_appointments_cache')
     .select('email, contact_name, phone, appointment_id, requested_time, calendar, outcome')
@@ -418,30 +416,35 @@ export async function fetchOrphanedGrouped({ page = 0, search = '' } = {}) {
   const { data, error } = await q
   if (error) throw error
 
-  // Group by email — keep latest appointment as primary
+  // Group by email
   const grouped = {}
   for (const row of (data || [])) {
     const key = row.email.toLowerCase()
     if (!grouped[key]) {
       grouped[key] = {
-        email:        row.email,
-        contact_name: row.contact_name,
-        phone:        row.phone,
-        latest_time:  row.requested_time,
-        count:        0,
+        email:           row.email,
+        contact_name:    row.contact_name,
+        phone:           row.phone,
+        latest_time:     row.requested_time,
+        count:           0,
         appointment_ids: [],
       }
     }
     grouped[key].count++
     grouped[key].appointment_ids.push(row.appointment_id)
-    // Keep latest date
     if (row.requested_time > grouped[key].latest_time) {
-      grouped[key].latest_time   = row.requested_time
-      grouped[key].contact_name  = row.contact_name
+      grouped[key].latest_time  = row.requested_time
+      grouped[key].contact_name = row.contact_name
     }
   }
 
-  const all = Object.values(grouped).sort((a, b) => (b.latest_time || '').localeCompare(a.latest_time || ''))
+  // Sort by selected order
+  const all = Object.values(grouped).sort((a, b) => {
+    if (sortBy === 'count_desc') return b.count - a.count
+    if (sortBy === 'count_asc')  return a.count - b.count
+    if (sortBy === 'date_asc')   return (a.latest_time || '').localeCompare(b.latest_time || '')
+    return (b.latest_time || '').localeCompare(a.latest_time || '') // date_desc default
+  })
   const totalCount = all.length
   const paged = all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
 

@@ -1,28 +1,21 @@
 import { useState, useEffect } from 'react'
-import { RefreshCw, Search, CheckCircle, AlertCircle, ChevronLeft, ChevronRight, Calendar, X, Eye } from 'lucide-react'
+import { RefreshCw, Search, CheckCircle, AlertCircle, ChevronLeft, ChevronRight, X, Eye, ArrowUpDown } from 'lucide-react'
 import { fetchOrphanedGrouped, fetchOrphanedStats, fetchAppointmentsForEmail, markAllAsContacted, refreshComputedTables, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 import styles from './Dashboard.module.css'
 import oStyles from './OrphanedAppointments.module.css'
 
 function formatDate(str) {
   if (!str) return '—'
-  try {
-    return new Date(str).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' })
-  } catch { return str }
+  try { return new Date(str).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) }
+  catch { return str }
 }
 
-// ── Appointments detail modal ─────────────────────────────────────────────
 function AppointmentsModal({ contact, onClose }) {
   const [appointments, setAppointments] = useState([])
-  const [loading, setLoading]           = useState(true)
-
+  const [loading, setLoading] = useState(true)
   useEffect(() => {
-    fetchAppointmentsForEmail(contact.email)
-      .then(setAppointments)
-      .catch(console.error)
-      .finally(() => setLoading(false))
+    fetchAppointmentsForEmail(contact.email).then(setAppointments).catch(console.error).finally(() => setLoading(false))
   }, [contact.email])
-
   return (
     <div className={oStyles.modalOverlay} onClick={e => e.target === e.currentTarget && onClose()}>
       <div className={oStyles.modal}>
@@ -33,32 +26,18 @@ function AppointmentsModal({ contact, onClose }) {
           </div>
           <button className={oStyles.modalClose} onClick={onClose}><X size={16}/></button>
         </div>
-
         {loading && <div className={oStyles.modalLoading}><RefreshCw size={16} className={styles.spin}/> Loading…</div>}
-
         {!loading && (
           <table className={oStyles.table}>
-            <thead>
-              <tr>
-                <th>Appointment Date</th>
-                <th>Calendar</th>
-                <th>Outcome</th>
-                <th>Source</th>
-                <th>Rescheduled</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Appointment Date</th><th>Calendar</th><th>Outcome</th><th>Source</th><th>Rescheduled</th></tr></thead>
             <tbody>
               {appointments.map((apt, i) => (
-                <tr key={apt.appointment_id || i} className={i%2===0 ? oStyles.rowEven : oStyles.rowOdd}>
+                <tr key={apt.appointment_id||i} className={i%2===0?oStyles.rowEven:oStyles.rowOdd}>
                   <td className={oStyles.date}>{formatDate(apt.requested_time)}</td>
-                  <td className={oStyles.calendar}>{apt.calendar || '—'}</td>
-                  <td>
-                    <span className={`${oStyles.outcome} ${apt.outcome==='confirmed' ? oStyles.confirmed : apt.outcome==='cancelled' ? oStyles.cancelled : oStyles.other}`}>
-                      {apt.outcome || '—'}
-                    </span>
-                  </td>
-                  <td className={oStyles.calendar}>{apt.source || '—'}</td>
-                  <td className={oStyles.calendar}>{apt.rescheduled || '—'}</td>
+                  <td className={oStyles.calendar}>{apt.calendar||'—'}</td>
+                  <td><span className={`${oStyles.outcome} ${apt.outcome==='confirmed'?oStyles.confirmed:apt.outcome==='cancelled'?oStyles.cancelled:oStyles.other}`}>{apt.outcome||'—'}</span></td>
+                  <td className={oStyles.calendar}>{apt.source||'—'}</td>
+                  <td className={oStyles.calendar}>{apt.rescheduled||'—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -69,26 +48,26 @@ function AppointmentsModal({ contact, onClose }) {
   )
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────
 export default function OrphanedAppointments() {
-  const [contacts, setContacts]       = useState([])
-  const [totalCount, setTotalCount]   = useState(0)
-  const [stats, setStats]             = useState({})
-  const [currentPage, setCurrentPage] = useState(0)
-  const [loading, setLoading]         = useState(false)
-  const [error, setError]             = useState('')
-  const [searchInput, setSearchInput] = useState('')
+  const [contacts, setContacts]         = useState([])
+  const [totalCount, setTotalCount]     = useState(0)
+  const [stats, setStats]               = useState({})
+  const [currentPage, setCurrentPage]   = useState(0)
+  const [loading, setLoading]           = useState(false)
+  const [error, setError]               = useState('')
+  const [searchInput, setSearchInput]   = useState('')
   const [activeSearch, setActiveSearch] = useState('')
-  const [marking, setMarking]         = useState({})
-  const [viewContact, setViewContact] = useState(null)
+  const [sortBy, setSortBy]             = useState('count_desc')
+  const [marking, setMarking]           = useState({})
+  const [viewContact, setViewContact]   = useState(null)
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
-  async function loadPage(page) {
+  async function loadPage(page, sort = sortBy) {
     setLoading(true); setError('')
     try {
       const [result, s] = await Promise.all([
-        fetchOrphanedGrouped({ page, search: activeSearch }),
+        fetchOrphanedGrouped({ page, search: activeSearch, sortBy: sort }),
         fetchOrphanedStats(),
       ])
       setContacts(result.contacts)
@@ -99,7 +78,12 @@ export default function OrphanedAppointments() {
     setLoading(false)
   }
 
-  useEffect(() => { if (hasSupabase) loadPage(0) }, [activeSearch])
+  useEffect(() => { if (hasSupabase) loadPage(0, sortBy) }, [activeSearch, sortBy])
+
+  function handleSortChange(newSort) {
+    setSortBy(newSort)
+    setCurrentPage(0)
+  }
 
   async function handleMarkContacted(contact) {
     setMarking(m => ({ ...m, [contact.email]: true }))
@@ -113,6 +97,13 @@ export default function OrphanedAppointments() {
     setMarking(m => ({ ...m, [contact.email]: false }))
   }
 
+  const SORT_OPTIONS = [
+    { value: 'count_desc', label: '↓ Most appointments' },
+    { value: 'count_asc',  label: '↑ Fewest appointments' },
+    { value: 'date_desc',  label: '↓ Latest date' },
+    { value: 'date_asc',   label: '↑ Oldest date' },
+  ]
+
   return (
     <div style={{ display:'flex', flexDirection:'column', minHeight:0 }}>
       <div className={styles.topbar}>
@@ -124,12 +115,12 @@ export default function OrphanedAppointments() {
         </div>
         <div className={styles.actions}>
           <button className={styles.btnSecondary} onClick={() => loadPage(currentPage)} disabled={loading}>
-            <RefreshCw size={14} className={loading ? styles.spin : ''}/> Refresh
+            <RefreshCw size={14} className={loading?styles.spin:''}/> Refresh
           </button>
         </div>
       </div>
 
-      <div style={{ display:'flex', gap:12, padding:'0 0 16px' }}>
+      <div style={{ display:'flex', gap:12, padding:'0 0 16px', flexWrap:'wrap', alignItems:'center' }}>
         <div style={{ background:'var(--amber-bg)', borderRadius:'var(--radius-md)', padding:'8px 16px', fontSize:13, color:'var(--amber-text)', display:'flex', gap:6, alignItems:'center' }}>
           <AlertCircle size={14}/> <strong>{(stats.orphanedCount||0).toLocaleString()}</strong> unmatched appointments · <strong>{totalCount.toLocaleString()}</strong> unique contacts
         </div>
@@ -142,12 +133,25 @@ export default function OrphanedAppointments() {
           <Search size={14} className={styles.searchIcon}/>
           <input className={styles.search} placeholder="Search name, email, phone…"
             value={searchInput} onChange={e => setSearchInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && setActiveSearch(searchInput)}/>
+            onKeyDown={e => e.key==='Enter' && setActiveSearch(searchInput)}/>
           {searchInput && <button className={styles.searchClear} onClick={() => { setSearchInput(''); setActiveSearch('') }}>✕</button>}
         </div>
         <button className={styles.btnSecondary} onClick={() => setActiveSearch(searchInput)} disabled={loading}>
           <Search size={14}/> Search
         </button>
+
+        {/* Sort control */}
+        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+          <ArrowUpDown size={13} color="var(--text-muted)"/>
+          <select
+            value={sortBy}
+            onChange={e => handleSortChange(e.target.value)}
+            className={styles.dateInput}
+            style={{ paddingRight:24, cursor:'pointer' }}
+          >
+            {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
       </div>
 
       {loading && (
@@ -180,20 +184,28 @@ export default function OrphanedAppointments() {
                 <th>Contact</th>
                 <th>Email</th>
                 <th>Phone</th>
-                <th>Appointments</th>
-                <th>Last Date</th>
+                <th
+                  style={{ cursor:'pointer', userSelect:'none', whiteSpace:'nowrap' }}
+                  onClick={() => handleSortChange(sortBy==='count_desc'?'count_asc':'count_desc')}
+                >
+                  Appointments {sortBy==='count_desc'?'↓':sortBy==='count_asc'?'↑':''}
+                </th>
+                <th
+                  style={{ cursor:'pointer', userSelect:'none', whiteSpace:'nowrap' }}
+                  onClick={() => handleSortChange(sortBy==='date_desc'?'date_asc':'date_desc')}
+                >
+                  Last Date {sortBy==='date_desc'?'↓':sortBy==='date_asc'?'↑':''}
+                </th>
                 <th style={{ width:220 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {contacts.map((c, i) => (
-                <tr key={c.email} className={i%2===0 ? oStyles.rowEven : oStyles.rowOdd}>
-                  <td className={oStyles.name}>{c.contact_name || '—'}</td>
+                <tr key={c.email} className={i%2===0?oStyles.rowEven:oStyles.rowOdd}>
+                  <td className={oStyles.name}>{c.contact_name||'—'}</td>
                   <td className={oStyles.email}>{c.email}</td>
-                  <td className={oStyles.phone}>{c.phone || '—'}</td>
-                  <td>
-                    <span className={oStyles.countBadge}>{c.count} appt{c.count !== 1 ? 's' : ''}</span>
-                  </td>
+                  <td className={oStyles.phone}>{c.phone||'—'}</td>
+                  <td><span className={oStyles.countBadge}>{c.count} appt{c.count!==1?'s':''}</span></td>
                   <td className={oStyles.date}>{formatDate(c.latest_time)}</td>
                   <td>
                     <div style={{ display:'flex', gap:6 }}>
@@ -218,7 +230,7 @@ export default function OrphanedAppointments() {
               <button className={styles.pageBtn} onClick={() => loadPage(0)} disabled={currentPage===0||loading}>««</button>
               <button className={styles.pageBtn} onClick={() => loadPage(currentPage-1)} disabled={currentPage===0||loading}><ChevronLeft size={14}/></button>
               {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-                let p = totalPages<=7 ? i : currentPage<4 ? i : currentPage>totalPages-5 ? totalPages-7+i : currentPage-3+i
+                let p = totalPages<=7?i:currentPage<4?i:currentPage>totalPages-5?totalPages-7+i:currentPage-3+i
                 return <button key={p} className={`${styles.pageBtn} ${p===currentPage?styles.pageBtnActive:''}`} onClick={() => loadPage(p)} disabled={loading}>{p+1}</button>
               })}
               <button className={styles.pageBtn} onClick={() => loadPage(currentPage+1)} disabled={currentPage>=totalPages-1||loading}><ChevronRight size={14}/></button>

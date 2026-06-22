@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight, Zap, Leaf, AlertCircle } from 'lucide-react'
+import { Upload, Download, RefreshCw, Search, Database, Users, Copy, Trash2, ShieldCheck, ChevronLeft, ChevronRight, Zap, Leaf, AlertCircle, RotateCcw } from 'lucide-react'
 import { fetchPage, fetchStats, upsertAllData, clearAllData, fetchAllForExport, buildNotesForApplicants, fetchFreshStats, fetchOrphanedStats, refreshComputedTables, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 export const hasGHL = !!import.meta.env.VITE_GHL_TOKEN
 import { enrichForDisplay, exportToCSV } from '../lib/dataUtils'
@@ -41,8 +41,25 @@ export default function Dashboard() {
   const [ghlPushList, setGhlPushList]             = useState(null)
   const [showGHLDiag, setShowGHLDiag]           = useState(false)
   const [exporting, setExporting]       = useState(false)
+  const [rebuilding, setRebuilding]     = useState(false)
   const [freshStats, setFreshStats]     = useState({})
   const [orphanedStats, setOrphanedStats] = useState({})
+
+  async function handleRebuildCache() {
+    setRebuilding(true)
+    setError('')
+    try {
+      await refreshComputedTables()
+      // Reload page and fresh stats after rebuild
+      const fStats = await fetchFreshStats().catch(() => ({}))
+      const oStats = await fetchOrphanedStats().catch(() => ({}))
+      setFreshStats(fStats)
+      setOrphanedStats(oStats)
+    } catch(e) {
+      setError('Cache rebuild failed: ' + e.message + ' — try running manually in Supabase SQL Editor.')
+    }
+    setRebuilding(false)
+  }
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
 
@@ -252,6 +269,18 @@ export default function Dashboard() {
         )}
 
         <div className={styles.sidebarFooter}>
+          {hasSupabase && (
+            <button
+              className={styles.verifyBtn}
+              style={rebuilding ? {} : { color:'var(--purple-text)', borderColor:'var(--purple)' }}
+              onClick={handleRebuildCache}
+              disabled={rebuilding}
+              title="Rebuild Fresh to Contact and Orphaned caches after any upload"
+            >
+              <RotateCcw size={13} className={rebuilding ? styles.spin : ''}/>
+              {rebuilding ? 'Rebuilding…' : 'Rebuild Cache'}
+            </button>
+          )}
           {hasSupabase && <button className={styles.verifyBtn} onClick={() => setShowVerify(true)}><ShieldCheck size={13}/> Verify DB</button>}
           {import.meta.env.VITE_GHL_TOKEN && (
             <button className={styles.verifyBtn} style={{color:'var(--amber-text)',borderColor:'var(--amber)'}} onClick={() => setShowGHLDiag(true)}><Zap size={13}/> GHL Diagnostics</button>
