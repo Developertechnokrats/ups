@@ -386,7 +386,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Type filter */}
+        {/* Type filter + Status + Interview filters */}
         <div className={styles.toolbar} style={{marginTop:'-8px'}}>
           <div style={{display:'flex',alignItems:'center',gap:'6px'}}>
             <span className={styles.filterRowLabel}>Type</span>
@@ -396,6 +396,30 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
+
+          {/* Status filter */}
+          <div className={styles.dateRange}>
+            <label className={styles.dateLabel}>Status</label>
+            <select className={styles.dateInput} value={statusFilter}
+              onChange={e => { setStatusFilter(e.target.value); loadPage(0, { statusFilter: e.target.value }) }}>
+              <option value=''>Any status</option>
+              {statusOptions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            {statusFilter && <button className={styles.clearDate} onClick={() => { setStatusFilter(''); loadPage(0, { statusFilter: '' }) }}>✕</button>}
+          </div>
+
+          {/* Interview filter */}
+          <div className={styles.dateRange}>
+            <label className={styles.dateLabel}>Interview</label>
+            <select className={styles.dateInput} value={interviewFilter}
+              onChange={e => { setInterviewFilter(e.target.value); loadPage(0, { interviewFilter: e.target.value }) }}>
+              <option value=''>Any</option>
+              <option value='yes'>Has appointment</option>
+              <option value='no'>No appointment</option>
+            </select>
+            {interviewFilter && <button className={styles.clearDate} onClick={() => { setInterviewFilter(''); loadPage(0, { interviewFilter: '' }) }}>✕</button>}
+          </div>
+
           {activeSearch && (
             <div className={styles.searchBadge}>
               Searching: <strong>"{activeSearch}"</strong>

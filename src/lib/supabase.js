@@ -154,12 +154,19 @@ export async function upsertAllData(applicantRows, applicationRows, onProgress) 
     if (i + 500 < deduped.length) await sleep(50)
   }
 
-  // 2. Wipe all old applications
+  // 2. Upsert applications — delete only for emails in this upload, then insert
+  // This preserves existing applications for applicants NOT in this upload
+  const uploadEmails = [...new Set(applicationRows.map(r => r.email).filter(Boolean))]
   onProgress?.({ stage: 'clearing', done: 0, total: 1 })
-  await withRetry(async () => {
-    const { error } = await supabase.from('applications').delete().gte('id', 0)
-    if (error) throw new Error('Cleanup failed: ' + error.message)
-  })
+
+  // Delete existing applications only for emails in this batch
+  for (let i = 0; i < uploadEmails.length; i += 200) {
+    const chunk = uploadEmails.slice(i, i + 200)
+    await withRetry(async () => {
+      const { error } = await supabase.from('applications').delete().in('email', chunk)
+      if (error) throw new Error('Cleanup failed: ' + error.message)
+    })
+  }
 
   // 3. Insert applications in batches of 500
   for (let i = 0; i < applicationRows.length; i += 500) {
