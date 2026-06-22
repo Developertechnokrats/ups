@@ -108,11 +108,20 @@ export async function fetchPage({ fromDate, toDate, duplicatesOnly = false, page
     }
   }
 
-  // Mark has_appointment on each applicant
+  // Build appMap for joining applications to applicants
+  const appMap2 = {}
+  for (const ap of allApplications) {
+    const key = (ap.email || '').toLowerCase()
+    if (!appMap2[key]) appMap2[key] = []
+    appMap2[key].push(ap)
+  }
+
+  // Mark has_appointment on each applicant AND attach their applications
   const enrichedApplicants = applicants.map(a => ({
     ...a,
     has_appointment: !!(apptMap[a.email]?.length),
     appointments:    (apptMap[a.email] || []).sort((x, y) => (y.requested_time || '') > (x.requested_time || '') ? 1 : -1),
+    applications:    appMap2[(a.email || '').toLowerCase()] || [],
   }))
 
   // Apply status filter (client-side, since it requires join to applications)

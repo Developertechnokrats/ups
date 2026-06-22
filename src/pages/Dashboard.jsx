@@ -107,18 +107,12 @@ export default function Dashboard() {
         fetchFreshStats().catch(() => ({})),
       ])
 
-      // Join applicants + applications, enrich safely — lowercase email for case-insensitive match
-      const appMap = {}
-      for (const a of result.applications) {
-        const key = (a.email || '').toLowerCase()
-        if (!appMap[key]) appMap[key] = []
-        appMap[key].push(a)
-      }
+      // Applications are already attached to each applicant from fetchPage
+      // Just enrich for display directly
       const enriched = []
       for (const row of result.applicants) {
         try {
-          const key = (row.email || '').toLowerCase()
-          enriched.push(...enrichForDisplay([{ ...row, applications: appMap[key] || [] }]))
+          enriched.push(...enrichForDisplay([row]))
         } catch(_) {
           enriched.push({ ...row, jobs: [], tags: '' })
         }
