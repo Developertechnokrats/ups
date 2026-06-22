@@ -79,9 +79,10 @@ export default function Dashboard() {
       const to      = opts.to      ?? toDate
       const mode    = opts.mode    ?? viewMode
 
-      const [result, stats] = await Promise.all([
+      const [result, stats, fStats] = await Promise.all([
         fetchPage({ fromDate: from || undefined, toDate: to || undefined, duplicatesOnly: mode === 'duplicates', page, search }),
         fetchStats(),
+        fetchFreshStats().catch(() => ({})),
       ])
 
       // Join applicants + applications, enrich safely
@@ -103,6 +104,7 @@ export default function Dashboard() {
       setTotalCount(result.totalCount)
       setCurrentPage(page)
       setDbStats(stats)
+      setFreshStats(fStats)
       setDbMode(true)
     } catch(e) {
       setError('Supabase fetch error: ' + e.message)
@@ -221,6 +223,12 @@ export default function Dashboard() {
           <button className={`${styles.navItem} ${viewMode==='duplicates' ? styles.active : ''}`} onClick={() => handleViewChange('duplicates')}>
             <Copy size={15}/> Duplicates only
             {dbStats.duplicates != null && <span className={styles.navCountRed}>{dbStats.duplicates.toLocaleString()}</span>}
+          </button>
+          <button className={`${styles.navItem} ${viewMode==='fresh' ? styles.active : ''}`} onClick={() => handleViewChange('fresh')}>
+            <Leaf size={15}/> Fresh to Contact
+            {freshStats.freshCount != null && (
+              <span className={styles.navCount} style={{background:'var(--green-bg)',color:'var(--green-text)'}}>{freshStats.freshCount.toLocaleString()}</span>
+            )}
           </button>
         </nav>
 

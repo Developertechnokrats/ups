@@ -137,12 +137,15 @@ alter table appointments enable row level security;
 drop policy if exists "Allow all on appointments" on appointments;
 create policy "Allow all on appointments" on appointments for all using (true) with check (true);
 
--- Add disqualified tracking to applicants if not exists
+-- Add has_appointment column if not exists
 alter table applicants add column if not exists has_appointment boolean default false;
 
 -- View: Fresh to Contact
--- Logic: status NOT IN (Hired, Disqualified) AND no appointment ever
-create or replace view fresh_to_contact as
+-- Logic: no Hired/Disqualified status AND no appointment ever booked
+drop view if exists fresh_to_contact_count;
+drop view if exists fresh_to_contact;
+
+create view fresh_to_contact as
 select
   a.id,
   a.applicant_id,
@@ -156,31 +159,18 @@ select
   a.applied_count,
   a.last_appointment_date,
   a.ghl_contact_id,
-  a.ghl_status,
-  a.tags
+  a.ghl_status
 from applicants a
 where
-  -- Exclude Hired
   not exists (
     select 1 from applications ap
-    where ap.email = a.email
-    and lower(ap.status_name) = 'hired'
+    where lower(ap.email) = lower(a.email)
+      and lower(ap.status_name) in ('hired', 'disqualified')
   )
-  -- Exclude Disqualified
-  and not exists (
-    select 1 from applications ap
-    where ap.email = a.email
-    and lower(ap.status_name) = 'disqualified'
-  )
-  -- Exclude anyone with an appointment
   and not exists (
     select 1 from appointments apt
-    where apt.email = a.email
+    where lower(apt.email) = lower(a.email)
   );
-
--- Count for stats
-create or replace view fresh_to_contact_count as
-select count(*) as total from fresh_to_contact;
 
 -- ============================================================
 -- Appointments table (from GHL export)
@@ -218,22 +208,4 @@ create policy "Allow all on appointments" on appointments for all using (true) w
 -- Logic:
 --   1. No application with status Hired or Disqualified
 --   2. Email NOT in appointments table
--- ============================================================
-
-drop view if exists fresh_to_contact;
-
-create view fresh_to_contact as
-select a.*
-from applicants a
-where
-  -- No Hired status across any application
-  not exists (
-    select 1 from applications ap
-    where lower(ap.email) = lower(a.email)
-      and lower(ap.status_name) in ('hired', 'disqualified')
-  )
-  -- No appointment ever booked
-  and not exists (
-    select 1 from appointments apt
-    where lower(apt.email) = lower(a.email)
-  );
+-- (view already created above)
