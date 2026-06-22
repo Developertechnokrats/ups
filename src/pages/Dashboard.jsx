@@ -98,11 +98,10 @@ export default function Dashboard() {
       const to      = opts.to      ?? toDate
       const mode    = opts.mode    ?? viewMode
 
-      const [result, stats, fStats, oStats] = await Promise.all([
+      const [result, stats, fStats] = await Promise.all([
         fetchPage({ fromDate: from || undefined, toDate: to || undefined, duplicatesOnly: mode === 'duplicates', page, search }),
         fetchStats(),
         fetchFreshStats().catch(() => ({})),
-        fetchOrphanedStats().catch(() => ({})),
       ])
 
       // Join applicants + applications, enrich safely
@@ -125,7 +124,6 @@ export default function Dashboard() {
       setCurrentPage(page)
       setDbStats(stats)
       setFreshStats(fStats)
-      setOrphanedStats(oStats)
       setDbMode(true)
     } catch(e) {
       setError('Supabase fetch error: ' + e.message)
@@ -252,12 +250,7 @@ export default function Dashboard() {
               <span className={styles.navCount} style={{background:'var(--green-bg)',color:'var(--green-text)'}}>{freshStats.freshCount.toLocaleString()}</span>
             )}
           </button>
-          <button className={`${styles.navItem} ${viewMode==='orphaned' ? styles.active : ''}`} onClick={() => handleViewChange('orphaned')}>
-            <AlertCircle size={15}/> Orphaned Appts
-            {orphanedStats.orphanedCount > 0 && (
-              <span className={styles.navCount} style={{background:'var(--amber-bg)',color:'var(--amber-text)'}}>{orphanedStats.orphanedCount.toLocaleString()}</span>
-            )}
-          </button>
+
         </nav>
 
         {Object.keys(dbStats).length > 0 && (

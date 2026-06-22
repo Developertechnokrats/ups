@@ -403,15 +403,14 @@ export async function refreshComputedTables() {
 export async function fetchOrphanedGrouped({ page = 0, search = '', sortBy = 'date_desc' } = {}) {
   if (!supabase) throw new Error('Supabase not configured')
 
-  // Fetch ALL rows (paginated through Supabase 1000-row limit)
-  // orphaned_appointments_cache is small enough to load fully for correct grouping/sorting
+  // Fetch ALL rows — loop in batches of 1000 to bypass Supabase default cap
   const allRows = []
   let from = 0
   const BATCH = 1000
   while (true) {
     let q = supabase
       .from('orphaned_appointments_cache')
-      .select('email, contact_name, phone, appointment_id, requested_time')
+      .select('email, contact_name, phone, requested_time', { count: 'exact' })
       .range(from, from + BATCH - 1)
 
     if (search?.trim()) {
@@ -419,15 +418,16 @@ export async function fetchOrphanedGrouped({ page = 0, search = '', sortBy = 'da
       q = q.or(`email.ilike.%${s}%,contact_name.ilike.%${s}%,phone.ilike.%${s}%`)
     }
 
-    const { data, error } = await q
+    const { data, error, count } = await q
     if (error) throw error
     if (!data || data.length === 0) break
     allRows.push(...data)
+    // If we got less than BATCH, we have everything
     if (data.length < BATCH) break
     from += BATCH
   }
 
-  // Group by email — full dataset so sorting is accurate
+  // Group by email across ALL rows
   const grouped = {}
   for (const row of allRows) {
     const key = row.email.toLowerCase()
@@ -447,7 +447,6 @@ export async function fetchOrphanedGrouped({ page = 0, search = '', sortBy = 'da
     }
   }
 
-  // Sort entire dataset then paginate
   const all = Object.values(grouped).sort((a, b) => {
     if (sortBy === 'count_desc') return b.count - a.count
     if (sortBy === 'count_asc')  return a.count - b.count
@@ -455,9 +454,11 @@ export async function fetchOrphanedGrouped({ page = 0, search = '', sortBy = 'da
     return (b.latest_time || '').localeCompare(a.latest_time || '')
   })
 
-  const totalCount = all.length
-  const paged = all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-  return { contacts: paged, totalCount }
+  return {
+    contacts:        all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    totalCount:      all.length,        // unique contacts
+    totalAppointments: allRows.length,  // total appointment rows
+  }
 }
 
 // Fetch all appointments for one email (for the View modal)

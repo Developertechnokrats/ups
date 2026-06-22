@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { RefreshCw, Search, CheckCircle, AlertCircle, ChevronLeft, ChevronRight, X, Eye, ArrowUpDown } from 'lucide-react'
-import { fetchOrphanedGrouped, fetchOrphanedStats, fetchAppointmentsForEmail, markAllAsContacted, refreshComputedTables, hasSupabase, PAGE_SIZE } from '../lib/supabase'
+import { fetchOrphanedGrouped, fetchAppointmentsForEmail, markAllAsContacted, refreshComputedTables, hasSupabase, PAGE_SIZE } from '../lib/supabase'
 import styles from './Dashboard.module.css'
 import oStyles from './OrphanedAppointments.module.css'
 
@@ -66,14 +66,11 @@ export default function OrphanedAppointments() {
   async function loadPage(page, sort = sortBy) {
     setLoading(true); setError('')
     try {
-      const [result, s] = await Promise.all([
-        fetchOrphanedGrouped({ page, search: activeSearch, sortBy: sort }),
-        fetchOrphanedStats(),
-      ])
+      const result = await fetchOrphanedGrouped({ page, search: activeSearch, sortBy: sort })
       setContacts(result.contacts)
       setTotalCount(result.totalCount)
       setCurrentPage(page)
-      setStats(s)
+      setStats({ orphanedCount: result.totalAppointments, uniqueContacts: result.totalCount })
     } catch(e) { setError('Error: ' + e.message) }
     setLoading(false)
   }
@@ -122,7 +119,7 @@ export default function OrphanedAppointments() {
 
       <div style={{ display:'flex', gap:12, padding:'0 0 16px', flexWrap:'wrap', alignItems:'center' }}>
         <div style={{ background:'var(--amber-bg)', borderRadius:'var(--radius-md)', padding:'8px 16px', fontSize:13, color:'var(--amber-text)', display:'flex', gap:6, alignItems:'center' }}>
-          <AlertCircle size={14}/> <strong>{(stats.orphanedCount||0).toLocaleString()}</strong> unmatched appointments · <strong>{totalCount.toLocaleString()}</strong> unique contacts
+          <AlertCircle size={14}/> <strong>{(stats.orphanedCount||0).toLocaleString()}</strong> unmatched appointments · <strong>{(stats.uniqueContacts||0).toLocaleString()}</strong> unique contacts
         </div>
       </div>
 
